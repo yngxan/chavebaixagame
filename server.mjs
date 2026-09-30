@@ -711,24 +711,27 @@ const server = createServer(async (request, response) => {
     try {
       const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id), action = String(data.action || '');
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
-      if (!['punch', 'tomato', 'snowball'].includes(action)) return json(response, 400, { error: 'Ação inválida.' });
+      if (!['punch', 'snowball'].includes(action)) return json(response, 400, { error: 'Ação inválida.' });
       const now = Date.now(), cooldown = action === 'punch' ? 480 : 850;
       if (now - client.lastCombatAt < cooldown) return json(response, 429, { error: 'Espera um instante antes de atacar de novo.' });
       client.lastCombatAt = now;
-      const aim = Math.atan2(Math.sin(finite(data.rotation, player.rotation)), Math.cos(finite(data.rotation, player.rotation)));
+      const yaw = Math.atan2(Math.sin(finite(data.yaw, player.rotation)), Math.cos(finite(data.yaw, player.rotation)));
+      const pitch = Math.max(-1.1, Math.min(1.1, finite(data.pitch, 0)));
+      const aim = { x: -Math.sin(yaw) * Math.cos(pitch), y: -Math.sin(pitch), z: Math.cos(yaw) * Math.cos(pitch) };
       if (action === 'punch') {
-        const fx = Math.sin(aim), fz = Math.cos(aim), reach = 1.55, cone = Math.cos(Math.PI / 3);
+        const origin = { x: player.position.x, y: player.position.y + 1.45, z: player.position.z }, reach = 1.7;
         let target = null, nearest = Infinity;
         for (const candidate of players.values()) {
           if (candidate.id === id || Math.abs(candidate.position.y - player.position.y) > 1.25) continue;
-          const dx = candidate.position.x - player.position.x, dz = candidate.position.z - player.position.z, distance = Math.hypot(dx, dz);
-          if (distance < .01 || distance > reach || (dx * fx + dz * fz) / distance < cone || distance >= nearest) continue;
-          target = candidate; nearest = distance;
+          const dx = candidate.position.x - origin.x, dy = candidate.position.y + 1.02 - origin.y, dz = candidate.position.z - origin.z;
+          const along = dx * aim.x + dy * aim.y + dz * aim.z, miss = Math.hypot(dx - aim.x * along, dy - aim.y * along, dz - aim.z * along);
+          if (along < 0 || along > reach || miss > .48 || along >= nearest) continue;
+          target = candidate; nearest = along;
         }
-        const dx = target ? target.position.x - player.position.x : fx, dz = target ? target.position.z - player.position.z : fz, length = Math.hypot(dx, dz) || 1;
+        const dx = target ? target.position.x - player.position.x : aim.x, dz = target ? target.position.z - player.position.z : aim.z, length = Math.hypot(dx, dz) || 1;
         broadcast({ type: 'combat-punch', id, targetId: target?.id || null, impulse: target ? { x: dx / length * 2.4, z: dz / length * 2.4 } : null, time: now });
       } else {
-        const x = Math.sin(aim), z = Math.cos(aim), projectile = { id: randomUUID(), ownerId: id, kind: action, position: { x: player.position.x + x * .58, y: player.position.y + .94, z: player.position.z + z * .58 }, velocity: { x: x * 12, y: 2.7, z: z * 12 }, lastAt: now, createdAt: now };
+        const projectile = { id: randomUUID(), ownerId: id, kind: action, position: { x: player.position.x + aim.x * .55, y: player.position.y + 1.4 + aim.y * .55, z: player.position.z + aim.z * .55 }, velocity: { x: aim.x * 14, y: aim.y * 14 + .8, z: aim.z * 14 }, lastAt: now, createdAt: now };
         projectiles.set(projectile.id, projectile);
         broadcast({ type: 'combat-throw', projectile: { id: projectile.id, ownerId: id, kind: action, position: projectile.position, velocity: projectile.velocity, time: now } });
       }
