@@ -24,6 +24,17 @@ const scrypt = promisify(scryptCallback);
 const clients = new Map();
 const players = new Map();
 const projectiles = new Map();
+// Closest point between the attack segment and a player's vertical body capsule.
+function playerSegmentHit(from, to, position, radius) {
+  const dx=to.x-from.x,dy=to.y-from.y,dz=to.z-from.z,lengthSq=dx*dx+dy*dy+dz*dz;
+  const low=position.y+.35,high=position.y+1.94,clamp=t=>Math.max(0,Math.min(1,t)),horizontal=dx*dx+dz*dz;
+  const samples=[0,1];
+  if(horizontal)samples.push(clamp(((position.x-from.x)*dx+(position.z-from.z)*dz)/horizontal));
+  for(const y of [low,high])if(lengthSq)samples.push(clamp(((position.x-from.x)*dx+(y-from.y)*dy+(position.z-from.z)*dz)/lengthSq));
+  let best=null,bestDistance=Infinity;
+  for(const t of samples){const x=from.x+dx*t,y=from.y+dy*t,z=from.z+dz*t,vertical=y-Math.max(low,Math.min(high,y)),distance=(x-position.x)**2+vertical**2+(z-position.z)**2;if(distance<radius*radius&&distance<bestDistance){best=t;bestDistance=distance;}}
+  return best;
+}
 const failedLogins = new Map();
 const sessionAccounts = new Map();
 const authRequests = new Map();
@@ -699,6 +710,7 @@ const server = createServer(async (request, response) => {
       const now = Date.now();
       if (now - client.lastEmoteAt < 650) return json(response, 429, { error: 'Espera um instante antes de outro emote.' });
       client.lastEmoteAt = now;
+      client.combatToken=null;
       broadcast({ type: 'emote', id, emote, time: now }, id);
       response.writeHead(204);
       return response.end();
@@ -712,29 +724,39 @@ const server = createServer(async (request, response) => {
       const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id), action = String(data.action || '');
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (!['punch', 'snowball'].includes(action)) return json(response, 400, { error: 'Ação inválida.' });
-      const now = Date.now(), cooldown = action === 'punch' ? 480 : 850;
+      const now = Date.now(), cooldown = action === 'punch' ? 560 : 850;
       if (now - client.lastCombatAt < cooldown) return json(response, 429, { error: 'Espera um instante antes de atacar de novo.' });
       client.lastCombatAt = now;
+      const combatToken=randomUUID();client.combatToken=combatToken;
       const yaw = Math.atan2(Math.sin(finite(data.yaw, player.rotation)), Math.cos(finite(data.yaw, player.rotation)));
       const pitch = Math.max(-1.1, Math.min(1.1, finite(data.pitch, 0)));
       const aim = { x: -Math.sin(yaw) * Math.cos(pitch), y: -Math.sin(pitch), z: Math.cos(yaw) * Math.cos(pitch) };
+      player.rotation=-yaw;
+      broadcast({type:'combat-start',id,kind:action,facing:-yaw,time:now});
+      // Resolve the strike/release at the matching animation keyframe, once only.
+      setTimeout(() => {
+      if(clients.get(id)!==client||players.get(id)!==player||client.combatToken!==combatToken)return;
+      const releasedAt=Date.now();
       if (action === 'punch') {
-        const origin = { x: player.position.x, y: player.position.y + 1.45, z: player.position.z }, reach = 1.7;
+        const origin = { x: player.position.x, y: player.position.y + 1.42, z: player.position.z }, reach = 1.7;
+        const end={x:origin.x+aim.x*reach,y:origin.y+aim.y*reach,z:origin.z+aim.z*reach};
         let target = null, nearest = Infinity;
         for (const candidate of players.values()) {
-          if (candidate.id === id || Math.abs(candidate.position.y - player.position.y) > 1.25) continue;
-          const dx = candidate.position.x - origin.x, dy = candidate.position.y + 1.02 - origin.y, dz = candidate.position.z - origin.z;
-          const along = dx * aim.x + dy * aim.y + dz * aim.z, miss = Math.hypot(dx - aim.x * along, dy - aim.y * along, dz - aim.z * along);
-          if (along < 0 || along > reach || miss > .48 || along >= nearest) continue;
-          target = candidate; nearest = along;
+          if (candidate.id === id) continue;
+          const hit=playerSegmentHit(origin,end,candidate.position,.36);
+          if(hit===null||hit>=nearest)continue;
+          target = candidate; nearest = hit;
         }
         const dx = target ? target.position.x - player.position.x : aim.x, dz = target ? target.position.z - player.position.z : aim.z, length = Math.hypot(dx, dz) || 1;
-        broadcast({ type: 'combat-punch', id, targetId: target?.id || null, impulse: target ? { x: dx / length * 2.4, z: dz / length * 2.4 } : null, time: now });
+        broadcast({ type: 'combat-punch', id, targetId: target?.id || null, impulse: target ? { x: dx / length * 2.4, z: dz / length * 2.4 } : null, time: releasedAt });
       } else {
-        const projectile = { id: randomUUID(), ownerId: id, kind: action, position: { x: player.position.x + aim.x * .55, y: player.position.y + 1.4 + aim.y * .55, z: player.position.z + aim.z * .55 }, velocity: { x: aim.x * 14, y: aim.y * 14 + .8, z: aim.z * 14 }, lastAt: now, createdAt: now };
+        const position={x:player.position.x+aim.x*.6+Math.cos(yaw)*.42,y:player.position.y+1.42+aim.y*.6,z:player.position.z+aim.z*.6+Math.sin(yaw)*.42};
+        const direction={x:player.position.x+aim.x*12-position.x,y:player.position.y+1.42+aim.y*12-position.y,z:player.position.z+aim.z*12-position.z},length=Math.hypot(direction.x,direction.y,direction.z);
+        const projectile = { id: randomUUID(), ownerId: id, kind: action, position, velocity: { x: direction.x/length*14, y: direction.y/length*14+.8, z: direction.z/length*14 }, lastAt: releasedAt, createdAt: releasedAt };
         projectiles.set(projectile.id, projectile);
-        broadcast({ type: 'combat-throw', projectile: { id: projectile.id, ownerId: id, kind: action, position: projectile.position, velocity: projectile.velocity, time: now } });
+        broadcast({ type: 'combat-throw', projectile: { id: projectile.id, ownerId: id, kind: action, position: projectile.position, velocity: projectile.velocity, time: releasedAt } });
       }
+      },action==='punch'?218:326).unref();
       return json(response, 200, { ok: true });
     } catch (error) { return json(response, error.statusCode || 400, { error: error.message || 'Não consegui completar a ação.' }); }
   }
@@ -806,15 +828,12 @@ setInterval(() => {
     let hit = null, bestDistance = Infinity;
     for (const target of players.values()) {
       if (target.id === projectile.ownerId || target.position.y < -.2) continue;
-      const center = { x: target.position.x, y: target.position.y + 1.02, z: target.position.z };
-      const sx = to.x - from.x, sy = to.y - from.y, sz = to.z - from.z, lengthSq = sx * sx + sy * sy + sz * sz;
-      const t = lengthSq ? Math.max(0, Math.min(1, ((center.x - from.x) * sx + (center.y - from.y) * sy + (center.z - from.z) * sz) / lengthSq)) : 0;
-      const dx = from.x + sx * t - center.x, dy = from.y + sy * t - center.y, dz = from.z + sz * t - center.z, distanceSq = dx * dx + dy * dy + dz * dz;
-      if (distanceSq < .48 * .48 && distanceSq < bestDistance) { hit = target; bestDistance = distanceSq; }
+      const t=playerSegmentHit(from,to,target.position,.43);
+      if(t!==null&&t<bestDistance){hit=target;bestDistance=t;}
     }
     projectile.position = to;
     if (hit) {
-      const speed = projectile.kind === 'snowball' ? 1.35 : .85, horizontalSpeed = Math.hypot(projectile.velocity.x, projectile.velocity.z) || 1;
+      const speed = 1.35, horizontalSpeed = Math.hypot(projectile.velocity.x, projectile.velocity.z) || 1;
       broadcast({ type: 'combat-impact', id: projectile.id, ownerId: projectile.ownerId, kind: projectile.kind, x: to.x, y: to.y, z: to.z, targetId: hit.id, impulse: { x: projectile.velocity.x / horizontalSpeed * speed, z: projectile.velocity.z / horizontalSpeed * speed }, time: now });
       projectiles.delete(projectileId);
     } else if (to.y <= .12 || now - projectile.createdAt > 2600 || Math.abs(to.x) > 100 || Math.abs(to.z) > 100) {
