@@ -33,6 +33,13 @@ function broadcastWithinChatRadius(message, origin) {
     if (Math.hypot(dx, dy, dz) <= CHAT_RADIUS) send(client.response, message);
   }
 }
+function withinVoiceRadius(origin, recipient) {
+  return Math.hypot(
+    origin.position.x - recipient.position.x,
+    origin.position.y - recipient.position.y,
+    origin.position.z - recipient.position.z,
+  ) <= CHAT_RADIUS;
+}
 function cleanName(value) {
   return String(value || 'CHAVE').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, 16) || 'CHAVE';
 }
@@ -85,7 +92,7 @@ const server = createServer(async (request, response) => {
       'x-accel-buffering': 'no',
     });
     response.flushHeaders();
-    clients.set(id, { response, lastStateAt: 0, lastChatAt: 0 });
+    clients.set(id, { response, lastStateAt: 0, lastChatAt: 0, voiceSignalTimes: [] });
     players.set(id, player);
     send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers });
     broadcast({ type: 'join', player }, id);
@@ -146,6 +153,40 @@ const server = createServer(async (request, response) => {
       if (now - client.lastChatAt < 500) return json(response, 429, { error: 'Espera um pouquinho antes de mandar outra mensagem.' });
       client.lastChatAt = now;
       broadcastWithinChatRadius({ type: 'chat', id: player.id, name: player.name, text, time: now }, player);
+      response.writeHead(204);
+      return response.end();
+    } catch (error) {
+      return json(response, error.statusCode || 400, { error: error.message });
+    }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/voice-signal') {
+    try {
+      const data = await readJson(request, 16384);
+      const fromId = String(data.id || '');
+      const toId = String(data.to || '');
+      const client = clients.get(fromId);
+      const sender = players.get(fromId);
+      const recipient = players.get(toId);
+      const recipientClient = clients.get(toId);
+      const kind = String(data.kind || '');
+      const allowedKinds = new Set(['offer', 'answer', 'candidate']);
+      if (!client || !sender) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!recipient || !recipientClient) return json(response, 404, { error: 'Jogador não encontrado.' });
+      if (!allowedKinds.has(kind) || !data.payload || typeof data.payload !== 'object') {
+        return json(response, 400, { error: 'Sinal de voz inválido.' });
+      }
+      if (kind === 'candidate' ? typeof data.payload.candidate !== 'string' : data.payload.type !== kind || typeof data.payload.sdp !== 'string') {
+        return json(response, 400, { error: 'Descrição de voz inválida.' });
+      }
+      if (JSON.stringify(data.payload).length > 12000) return json(response, 413, { error: 'Sinal de voz muito grande.' });
+      if (!withinVoiceRadius(sender, recipient)) return json(response, 403, { error: 'Jogador fora do raio de voz.' });
+      const now = Date.now();
+      const signalTimes = (client.voiceSignalTimes || []).filter(time => now - time < 1000);
+      if (signalTimes.length >= 80) return json(response, 429, { error: 'Muitos sinais de voz; aguarde um instante.' });
+      signalTimes.push(now);
+      client.voiceSignalTimes = signalTimes;
+      send(recipientClient.response, { type: 'voice-signal', from: fromId, kind, payload: data.payload });
       response.writeHead(204);
       return response.end();
     } catch (error) {
