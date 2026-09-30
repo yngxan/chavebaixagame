@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PORT = Number(process.env.PORT || 4173);
 const MAX_PLAYERS = 32;
+const CHAT_RADIUS = 12;
 const clients = new Map();
 const players = new Map();
 const allowedFiles = new Map([
@@ -21,6 +22,16 @@ const allowedFiles = new Map([
 const send = (response, message) => response.write(`data: ${JSON.stringify(message)}\n\n`);
 function broadcast(message, exceptId = null) {
   for (const [id, client] of clients) if (id !== exceptId) send(client.response, message);
+}
+function broadcastWithinChatRadius(message, origin) {
+  for (const [id, client] of clients) {
+    const recipient = players.get(id);
+    if (!recipient) continue;
+    const dx = origin.position.x - recipient.position.x;
+    const dy = origin.position.y - recipient.position.y;
+    const dz = origin.position.z - recipient.position.z;
+    if (Math.hypot(dx, dy, dz) <= CHAT_RADIUS) send(client.response, message);
+  }
 }
 function cleanName(value) {
   return String(value || 'CHAVE').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, 16) || 'CHAVE';
@@ -134,7 +145,7 @@ const server = createServer(async (request, response) => {
       const now = Date.now();
       if (now - client.lastChatAt < 500) return json(response, 429, { error: 'Espera um pouquinho antes de mandar outra mensagem.' });
       client.lastChatAt = now;
-      broadcast({ type: 'chat', id: player.id, name: player.name, text, time: now });
+      broadcastWithinChatRadius({ type: 'chat', id: player.id, name: player.name, text, time: now }, player);
       response.writeHead(204);
       return response.end();
     } catch (error) {
