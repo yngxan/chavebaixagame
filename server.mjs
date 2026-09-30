@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
-import { extname, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { dirname, extname, join } from 'node:path';
+import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -17,8 +18,17 @@ const TURN_KEY_ID = process.env.CF_TURN_KEY_ID || '';
 const TURN_API_TOKEN = process.env.CF_TURN_API_TOKEN || '';
 const DEFAULT_ICE_SERVERS = [{ urls: 'stun:stun.cloudflare.com:3478' }];
 const TURN_CREDENTIAL_TTL = 86400;
+const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+const PROFILE_FILE = join(ROOT, 'data', 'accounts.json');
+const scrypt = promisify(scryptCallback);
 const clients = new Map();
 const players = new Map();
+const failedLogins = new Map();
+const sessionAccounts = new Map();
+const authRequests = new Map();
+let database = null;
+let localAccounts = { accounts: [], sessions: [] };
+let localWriteQueue = Promise.resolve();
 const allowedFiles = new Map([
   ['/', 'index.html'],
   ['/index.html', 'index.html'],
@@ -70,7 +80,7 @@ function readJson(request, limit = 8192) {
       }
     });
     request.on('end', () => {
-      try { resolve(JSON.parse(body || '{}')); }
+      try { const parsed = JSON.parse(body || '{}'); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid object'); resolve(parsed); }
       catch { reject(Object.assign(new Error('JSON inválido'), { statusCode: 400 })); }
     });
     request.on('error', reject);
@@ -79,6 +89,139 @@ function readJson(request, limit = 8192) {
 function json(response, statusCode, value) {
   response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   response.end(JSON.stringify(value));
+}
+const DEFAULT_APPEARANCE = { skin: '#f4c9a0', hair: '#e2ddce', hairAccent: '#f1e9df', facialHair: '#4a3028', shirt: '#8294b0', pants: '#25242b', shoe: '#414d69', eyeLeft: '#596881', eyeRight: '#8a4c59', gender: 'feminine', hairStyle: 'long', hairFall: 'open', beardStyle: 'none', key: true, hood: false };
+const ALLOWED_GENDERS = new Set(['masculine', 'feminine']);
+const ALLOWED_HAIR_STYLES = new Set(['short', 'fringe', 'medium', 'long', 'longBack', 'curly', 'curlyVolume', 'auburnBob', 'dreads', 'shaggy']);
+const ALLOWED_BEARDS = new Set(['none', 'goatee', 'mustache', 'full', 'mustacheGoatee']);
+function cleanAppearance(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) value = {};
+  return {
+    skin: cleanColor(value.skin, DEFAULT_APPEARANCE.skin), hair: cleanColor(value.hair, DEFAULT_APPEARANCE.hair),
+    hairAccent: cleanColor(value.hairAccent, DEFAULT_APPEARANCE.hairAccent), facialHair: cleanColor(value.facialHair, DEFAULT_APPEARANCE.facialHair),
+    shirt: cleanColor(value.shirt, DEFAULT_APPEARANCE.shirt), pants: cleanColor(value.pants, DEFAULT_APPEARANCE.pants), shoe: cleanColor(value.shoe, DEFAULT_APPEARANCE.shoe),
+    eyeLeft: cleanColor(value.eyeLeft, DEFAULT_APPEARANCE.eyeLeft), eyeRight: cleanColor(value.eyeRight, DEFAULT_APPEARANCE.eyeRight),
+    gender: ALLOWED_GENDERS.has(value.gender) ? value.gender : DEFAULT_APPEARANCE.gender,
+    hairStyle: ALLOWED_HAIR_STYLES.has(value.hairStyle) ? value.hairStyle : DEFAULT_APPEARANCE.hairStyle,
+    hairFall: value.hairFall === 'overEyes' ? 'overEyes' : 'open',
+    beardStyle: ALLOWED_BEARDS.has(value.beardStyle) ? value.beardStyle : 'none',
+    key: typeof value.key === 'boolean' ? value.key : DEFAULT_APPEARANCE.key, hood: typeof value.hood === 'boolean' ? value.hood : DEFAULT_APPEARANCE.hood,
+  };
+}
+function cleanProfile(value = {}, fallbackName = 'JOGADOR') {
+  return { name: cleanName(value.name || fallbackName).toUpperCase(), eyeMode: value.eyeMode === 'both' ? 'both' : 'separate', hasChosenHairColor: Boolean(value.hasChosenHairColor), appearance: cleanAppearance(value.appearance) };
+}
+function normalizeUsername(value) { return String(value || '').trim().toLowerCase(); }
+function validUsername(value) { return /^[a-z0-9_.-]{3,20}$/.test(value); }
+function passwordHash(password, salt) { return scrypt(password, Buffer.from(salt, 'hex'), 64).then(result => Buffer.from(result).toString('hex')); }
+function tokenHash(token) { return createHash('sha256').update(token).digest('hex'); }
+function readCookie(request, name) {
+  const cookies = String(request.headers.cookie || '').split(';');
+  for (const cookie of cookies) { const [key, ...value] = cookie.trim().split('='); if (key === name) return value.join('='); }
+  return '';
+}
+function sessionCookie(request, token, maxAge = Math.floor(SESSION_DURATION_MS / 1000)) {
+  const secure = request.headers['x-forwarded-proto'] === 'https' || Boolean(request.socket.encrypted);
+  return `lowkey_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+}
+async function persistLocalAccounts() {
+  const snapshot = JSON.stringify(localAccounts);
+  localWriteQueue = localWriteQueue.catch(() => {}).then(async () => {
+    await mkdir(dirname(PROFILE_FILE), { recursive: true });
+    const temporary = `${PROFILE_FILE}.tmp`;
+    await writeFile(temporary, snapshot, { encoding: 'utf8', mode: 0o600 });
+    await rename(temporary, PROFILE_FILE);
+  });
+  return localWriteQueue;
+}
+async function initializeAccountStore() {
+  if (process.env.RENDER === 'true' && !process.env.DATABASE_URL) throw new Error('Configure DATABASE_URL antes de publicar o sistema de contas no Render.');
+  if (process.env.DATABASE_URL) {
+    const { Pool } = await import('pg');
+    database = new Pool({ connectionString: process.env.DATABASE_URL, max: 5, connectionTimeoutMillis: 10000, idleTimeoutMillis: 30000 });
+    database.on('error', () => console.error('Conexão ociosa com o banco de contas foi encerrada.'));
+    await database.query(`CREATE TABLE IF NOT EXISTS lowkey_accounts (
+      id UUID PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_salt TEXT NOT NULL,
+      password_hash TEXT NOT NULL, profile JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    await database.query(`CREATE TABLE IF NOT EXISTS lowkey_sessions (
+      token_hash TEXT PRIMARY KEY, account_id UUID NOT NULL REFERENCES lowkey_accounts(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    await database.query('CREATE INDEX IF NOT EXISTS lowkey_sessions_expiry_idx ON lowkey_sessions (expires_at)');
+    console.log('Armazenamento de contas conectado ao PostgreSQL.');
+    return;
+  }
+  try {
+    const saved = JSON.parse(await readFile(PROFILE_FILE, 'utf8'));
+    localAccounts = { accounts: Array.isArray(saved.accounts) ? saved.accounts : [], sessions: Array.isArray(saved.sessions) ? saved.sessions : [] };
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  console.log('Armazenamento local de contas ativo (senhas protegidas por hash).');
+}
+await initializeAccountStore();
+function publicAccount(account) { return { id: account.id, username: account.username, profile: account.profile }; }
+async function findAccountByUsername(username) {
+  if (database) { const result = await database.query('SELECT id, username, password_salt AS "passwordSalt", password_hash AS "passwordHash", profile FROM lowkey_accounts WHERE username = $1', [username]); return result.rows[0] || null; }
+  return localAccounts.accounts.find(account => account.username === username) || null;
+}
+async function findAccountById(id) {
+  if (database) { const result = await database.query('SELECT id, username, profile FROM lowkey_accounts WHERE id = $1', [id]); return result.rows[0] || null; }
+  return localAccounts.accounts.find(account => account.id === id) || null;
+}
+async function createAccount(account) {
+  if (database) {
+    const result = await database.query('INSERT INTO lowkey_accounts (id, username, password_salt, password_hash, profile) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, profile', [account.id, account.username, account.passwordSalt, account.passwordHash, account.profile]);
+    return result.rows[0];
+  }
+  if (localAccounts.accounts.some(existing => existing.username === account.username)) throw Object.assign(new Error('Este usuário já existe.'), { code: '23505' });
+  localAccounts.accounts.push(account);
+  await persistLocalAccounts();
+  return account;
+}
+async function updateAccountProfile(id, profile) {
+  if (database) { const result = await database.query('UPDATE lowkey_accounts SET profile = $2 WHERE id = $1 RETURNING id', [id, profile]); if (!result.rowCount) return false; }
+  else { const account = localAccounts.accounts.find(item => item.id === id); if (!account) return false; account.profile = profile; await persistLocalAccounts(); }
+  for (const cached of sessionAccounts.values()) if (cached.account.id === id) cached.account.profile = profile;
+  return true;
+}
+async function createAccountSession(accountId) {
+  const token = randomBytes(32).toString('base64url'), hash = tokenHash(token), expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
+  if (database) await database.query('INSERT INTO lowkey_sessions (token_hash, account_id, expires_at) VALUES ($1, $2, $3)', [hash, accountId, expiresAt]);
+  else { localAccounts.sessions = localAccounts.sessions.filter(session => Date.parse(session.expiresAt) > Date.now()); localAccounts.sessions.push({ tokenHash: hash, accountId, expiresAt: expiresAt.toISOString() }); await persistLocalAccounts(); }
+  return token;
+}
+async function accountForRequest(request) {
+  const token = readCookie(request, 'lowkey_session');
+  if (!token || token.length > 100) return null;
+  const hash = tokenHash(token);
+  const cached = sessionAccounts.get(hash);
+  if (cached && cached.validUntil > Date.now()) return cached.account;
+  sessionAccounts.delete(hash);
+  let account = null, expiresAt = 0;
+  if (database) { const result = await database.query('SELECT a.id, a.username, a.profile, s.expires_at AS "expiresAt" FROM lowkey_sessions s JOIN lowkey_accounts a ON a.id = s.account_id WHERE s.token_hash = $1 AND s.expires_at > NOW()', [hash]); if (result.rows[0]) { account = publicAccount(result.rows[0]); expiresAt = new Date(result.rows[0].expiresAt).getTime(); } }
+  else { const session = localAccounts.sessions.find(item => item.tokenHash === hash && Date.parse(item.expiresAt) > Date.now()); if (session) { const stored = await findAccountById(session.accountId); account = stored ? publicAccount(stored) : null; expiresAt = Date.parse(session.expiresAt); } }
+  if (account) sessionAccounts.set(hash, { account, validUntil: Math.min(expiresAt, Date.now() + 30000) });
+  return account;
+}
+async function deleteAccountSession(request) {
+  const token = readCookie(request, 'lowkey_session');
+  if (!token || token.length > 100) return;
+  const hash = tokenHash(token);
+  sessionAccounts.delete(hash);
+  if (database) await database.query('DELETE FROM lowkey_sessions WHERE token_hash = $1', [hash]);
+  else { const before = localAccounts.sessions.length; localAccounts.sessions = localAccounts.sessions.filter(session => session.tokenHash !== hash); if (before !== localAccounts.sessions.length) await persistLocalAccounts(); }
+}
+function authRateLimited(username) {
+  const key = normalizeUsername(username), now = Date.now(), attempts = (failedLogins.get(key) || []).filter(at => now - at < 15 * 60 * 1000);
+  if (attempts.length >= 8) { failedLogins.set(key, attempts); return true; }
+  return false;
+}
+function noteFailedLogin(username) { const key = normalizeUsername(username), now = Date.now(), attempts = (failedLogins.get(key) || []).filter(at => now - at < 15 * 60 * 1000); attempts.push(now); failedLogins.set(key, attempts); }
+function limitAuthRequests(request) {
+  const forwarded = process.env.RENDER === 'true' ? String(request.headers['x-forwarded-for'] || '').split(',').at(-1)?.trim() : '';
+  const key = forwarded || request.socket.remoteAddress || 'local', now = Date.now(), attempts = (authRequests.get(key) || []).filter(at => now - at < 15 * 60 * 1000);
+  if (attempts.length >= 100) return true;
+  attempts.push(now); authRequests.set(key, attempts); return false;
 }
 function hasSfuConfig() { return Boolean(SFU_APP_ID && SFU_APP_SECRET); }
 function allowSfuSession(client) {
@@ -173,6 +316,78 @@ async function cleanupSfuClient(client) {
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+  if (request.method === 'GET' && url.pathname === '/healthz') {
+    try { if (database) await database.query({ text: 'SELECT 1', query_timeout: 3000 }); return json(response, 200, { ok: true }); }
+    catch { return json(response, 503, { ok: false }); }
+  }
+  if (request.method === 'POST' && ['/api/auth/register', '/api/auth/login'].includes(url.pathname) && limitAuthRequests(request)) return json(response, 429, { error: 'Muitas tentativas de entrada. Aguarde alguns minutos.' });
+  if (request.method === 'POST' && url.pathname === '/api/auth/register') {
+    try {
+      const data = await readJson(request, 4096), username = normalizeUsername(data.username), password = String(data.password || '');
+      if (!validUsername(username)) return json(response, 400, { error: 'Use um usuário de 3 a 20 caracteres: letras, números, ponto, traço ou underline.' });
+      if (password.length < 8 || password.length > 128) return json(response, 400, { error: 'A senha precisa ter entre 8 e 128 caracteres.' });
+      if (authRateLimited(username)) return json(response, 429, { error: 'Muitas tentativas para esse usuário. Aguarde 15 minutos.' });
+      if (await findAccountByUsername(username)) return json(response, 409, { error: 'Este usuário já existe. Entre com a senha dele.' });
+      const salt = randomBytes(16).toString('hex'), profile = cleanProfile({}, username.toUpperCase());
+      const account = { id: randomUUID(), username, passwordSalt: salt, passwordHash: await passwordHash(password, salt), profile };
+      let created;
+      try { created = await createAccount(account); }
+      catch (error) { if (error.code === '23505') return json(response, 409, { error: 'Este usuário já existe. Entre com a senha dele.' }); throw error; }
+      failedLogins.delete(username);
+      response.setHeader('set-cookie', sessionCookie(request, await createAccountSession(created.id)));
+      return json(response, 201, { user: publicAccount(created) });
+    } catch (error) {
+      console.error('Falha no cadastro de conta.');
+      return json(response, error.statusCode || 503, { error: error.statusCode ? error.message : 'Não consegui criar a conta agora.' });
+    }
+  }
+  if (request.method === 'POST' && url.pathname === '/api/auth/login') {
+    try {
+      const data = await readJson(request, 4096), username = normalizeUsername(data.username), password = String(data.password || '');
+      if (authRateLimited(username)) return json(response, 429, { error: 'Muitas tentativas para esse usuário. Aguarde 15 minutos.' });
+      const account = validUsername(username) ? await findAccountByUsername(username) : null;
+      const salt = account?.passwordSalt || account?.password_salt || '4a6f10a9d624e8e882f80c9a5d9a1578';
+      const actualHash = account?.passwordHash || account?.password_hash || '0'.repeat(128);
+      const candidate = Buffer.from(await passwordHash(password.slice(0, 128), salt), 'hex'), expected = Buffer.from(actualHash, 'hex');
+      const matches = expected.length === candidate.length && timingSafeEqual(expected, candidate);
+      if (!account || !matches) { noteFailedLogin(username); return json(response, 401, { error: 'Usuário ou senha incorretos.' }); }
+      failedLogins.delete(username);
+      response.setHeader('set-cookie', sessionCookie(request, await createAccountSession(account.id)));
+      return json(response, 200, { user: publicAccount(account) });
+    } catch (error) {
+      console.error('Falha ao entrar em uma conta.');
+      return json(response, error.statusCode || 503, { error: error.statusCode ? error.message : 'Não consegui entrar agora.' });
+    }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/auth/me') {
+    try { const account = await accountForRequest(request); return account ? json(response, 200, { user: publicAccount(account) }) : json(response, 401, { error: 'Entre na sua conta.' }); }
+    catch { return json(response, 503, { error: 'O serviço de contas está indisponível.' }); }
+  }
+  if (request.method === 'POST' && url.pathname === '/api/auth/logout') {
+    try {
+      const account = await accountForRequest(request);
+      await deleteAccountSession(request);
+      response.setHeader('set-cookie', sessionCookie(request, '', 0));
+      if (account) for (const client of clients.values()) if (client.accountId === account.id) client.response.end();
+      return json(response, 200, { ok: true });
+    } catch { return json(response, 503, { error: 'Não consegui sair da conta agora.' }); }
+  }
+  if (request.method === 'POST' && url.pathname === '/api/profile') {
+    try {
+      const account = await accountForRequest(request);
+      if (!account) return json(response, 401, { error: 'Entre na sua conta.' });
+      const data = await readJson(request, 4096), profile = cleanProfile(data, account.username.toUpperCase());
+      if (!await updateAccountProfile(account.id, profile)) return json(response, 404, { error: 'Conta não encontrada.' });
+      return json(response, 200, { profile });
+    } catch (error) { return json(response, error.statusCode || 503, { error: error.statusCode ? error.message : 'Não consegui salvar o personagem.' }); }
+  }
+  const publicApiPaths = new Set(['/api/auth/register', '/api/auth/login', '/api/auth/me', '/api/auth/logout', '/api/voice/config']);
+  let authenticatedAccount = null;
+  if (url.pathname.startsWith('/api/') && !publicApiPaths.has(url.pathname) && url.pathname !== '/api/profile') {
+    try { authenticatedAccount = await accountForRequest(request); }
+    catch { return json(response, 503, { error: 'O serviço de contas está indisponível.' }); }
+    if (!authenticatedAccount) return json(response, 401, { error: 'Entre na sua conta para jogar.' });
+  }
   if (request.method === 'GET' && url.pathname === '/api/voice/config') {
     const localHost = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname);
     const mode = hasSfuConfig() ? 'sfu' : localHost ? 'direct' : 'unconfigured';
@@ -182,7 +397,7 @@ const server = createServer(async (request, response) => {
     try {
       const data = await readJson(request, 2048);
       const client = clients.get(String(data.id || ''));
-      if (!client) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       return json(response, 200, await getTurnIceServers(client));
     } catch (error) {
       return json(response, 502, { error: 'Não consegui preparar os servidores de rede para a voz.' });
@@ -194,8 +409,9 @@ const server = createServer(async (request, response) => {
     const existingPlayers = [...players.values()];
     const angle = existingPlayers.length * 2.399;
     const radius = 2.8 + Math.floor(existingPlayers.length / 10) * 0.5;
+    const profile = cleanProfile(authenticatedAccount.profile, authenticatedAccount.username.toUpperCase());
     const player = {
-      id, name: 'CHAVE', appearance: { skin: '#f4c9a0', hair: '#e2ddce', hairAccent: '#f1e9df', facialHair: '#4a3028', shirt: '#8294b0', pants: '#25242b', shoe: '#414d69', eyeLeft: '#596881', eyeRight: '#8a4c59', gender: 'feminine', hairStyle: 'long', hairFall: 'open', beardStyle: 'none', key: true, hood: false },
+      id, accountId: authenticatedAccount.id, name: profile.name, appearance: profile.appearance,
       position: { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false, voiceSessionId: null,
     };
     response.writeHead(200, {
@@ -205,7 +421,7 @@ const server = createServer(async (request, response) => {
       'x-accel-buffering': 'no',
     });
     response.flushHeaders();
-    clients.set(id, { response, lastStateAt: 0, lastChatAt: 0, lastEmoteAt: -Infinity, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
+    clients.set(id, { response, accountId: authenticatedAccount.id, lastStateAt: 0, lastChatAt: 0, lastEmoteAt: -Infinity, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
     players.set(id, player);
     send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers });
     broadcast({ type: 'join', player }, id);
@@ -225,23 +441,14 @@ const server = createServer(async (request, response) => {
       const data = await readJson(request);
       const client = clients.get(String(data.id || ''));
       const player = players.get(String(data.id || ''));
-      if (!client || !player) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       const now = Date.now();
       if (now - client.lastStateAt < 40) { response.writeHead(204); return response.end(); }
       client.lastStateAt = now;
       const appearance = data.appearance || {};
       const position = data.position || {};
       player.name = cleanName(data.name);
-      player.appearance = {
-        skin: cleanColor(appearance.skin, '#f4c9a0'), hair: cleanColor(appearance.hair, '#17151d'), hairAccent: cleanColor(appearance.hairAccent, '#725047'), facialHair: cleanColor(appearance.facialHair, '#4a3028'),
-        shirt: cleanColor(appearance.shirt, '#25232e'), pants: cleanColor(appearance.pants, '#25242b'), shoe: cleanColor(appearance.shoe, '#414d69'),
-        eyeLeft: cleanColor(appearance.eyeLeft, '#596881'), eyeRight: cleanColor(appearance.eyeRight, '#8a4c59'),
-        gender: ['masculine', 'feminine'].includes(appearance.gender) ? appearance.gender : 'masculine',
-        hairStyle: ['short', 'fringe', 'medium', 'long', 'longBack', 'curly', 'curlyVolume', 'auburnBob', 'dreads', 'shaggy'].includes(appearance.hairStyle) ? appearance.hairStyle : 'fringe',
-        hairFall: appearance.hairFall === 'overEyes' ? 'overEyes' : 'open',
-        beardStyle: ['none', 'goatee', 'mustache', 'full', 'mustacheGoatee'].includes(appearance.beardStyle) ? appearance.beardStyle : 'none',
-        key: Boolean(appearance.key), hood: Boolean(appearance.hood),
-      };
+      player.appearance = cleanAppearance(appearance);
       player.position = {
         x: Math.max(-500, Math.min(500, finite(position.x))),
         y: Math.max(-100, Math.min(100, finite(position.y))),
@@ -267,7 +474,7 @@ const server = createServer(async (request, response) => {
       const id = String(data.id || '');
       const client = clients.get(id);
       const player = players.get(id);
-      if (!client || !player) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (!hasSfuConfig()) return json(response, 503, { error: 'Voz centralizada ainda não configurada no servidor.' });
       if (!allowSfuSession(client)) return json(response, 429, { error: 'Muitas reconexões de voz. Aguarde um minuto.' });
       if (data.sessionDescription?.type !== 'offer' || typeof data.sessionDescription?.sdp !== 'string' || !data.sessionDescription.sdp || data.sessionDescription.sdp.length > 24000 || typeof data.mid !== 'string' || data.mid.length > 12) {
@@ -315,7 +522,7 @@ const server = createServer(async (request, response) => {
       const id = String(data.id || '');
       const client = clients.get(id);
       const player = players.get(id);
-      if (!client || !player) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (!client.voicePublishSessionId || player.voiceSessionId !== client.voicePublishSessionId) return json(response, 409, { error: 'O microfone ainda não foi publicado.' });
       client.voiceReady = true;
       player.voiceEnabled = true;
@@ -332,7 +539,7 @@ const server = createServer(async (request, response) => {
       const data = await readJson(request, 8192);
       const id = String(data.id || '');
       const client = clients.get(id);
-      if (!client || !players.has(id)) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || client.accountId !== authenticatedAccount.id || !players.has(id)) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (!hasSfuConfig()) return json(response, 503, { error: 'Voz centralizada ainda não configurada no servidor.' });
       return await queueVoiceMutation(client, async () => {
         const requestedIds = Array.isArray(data.toIds) ? data.toIds : data.to ? [data.to] : [];
@@ -382,7 +589,7 @@ const server = createServer(async (request, response) => {
       const id = String(data.id || '');
       const sessionId = String(data.sessionId || '');
       const client = clients.get(id);
-      if (!client || !players.has(id)) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || client.accountId !== authenticatedAccount.id || !players.has(id)) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (data.sessionDescription?.type !== 'answer' || typeof data.sessionDescription?.sdp !== 'string' || data.sessionDescription.sdp.length > 100000) return json(response, 400, { error: 'Resposta de voz inválida.' });
       return await queueVoiceMutation(client, async () => {
         if (!client.voiceReceiveSessionId || client.voiceReceiveSessionId !== sessionId) return json(response, 409, { error: 'A sessão de recepção expirou.' });
@@ -400,7 +607,7 @@ const server = createServer(async (request, response) => {
       const data = await readJson(request, 2048);
       const client = clients.get(String(data.id || ''));
       const toId = String(data.to || '');
-      if (!client) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       return await queueVoiceMutation(client, async () => {
         const subscription = client.voiceSubscriptions.get(toId);
         if (subscription && client.voiceReceiveSessionId === subscription.sessionId && (!data.sessionId || data.sessionId === subscription.sessionId)) {
@@ -421,7 +628,7 @@ const server = createServer(async (request, response) => {
       const id = String(data.id || '');
       const client = clients.get(id);
       const player = players.get(id);
-      if (!client || !player) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       const publishSessionId = client.voicePublishSessionId;
       const publishMid = client.voicePublishMid;
       client.voicePublishSessionId = null;
@@ -442,7 +649,7 @@ const server = createServer(async (request, response) => {
     try {
       const data = await readJson(request, 2048);
       const client = clients.get(String(data.id || ''));
-      if (!client) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       return await queueVoiceMutation(client, async () => {
         const sessionId = client.voiceReceiveSessionId;
         if (sessionId && (!data.sessionId || data.sessionId === sessionId)) {
@@ -465,7 +672,7 @@ const server = createServer(async (request, response) => {
       const client = clients.get(String(data.id || ''));
       const player = players.get(String(data.id || ''));
       const text = String(data.text || '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, 90);
-      if (!client || !player) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (!text) return json(response, 400, { error: 'Escreva uma mensagem.' });
       const now = Date.now();
       if (now - client.lastChatAt < 500) return json(response, 429, { error: 'Espera um pouquinho antes de mandar outra mensagem.' });
@@ -486,7 +693,7 @@ const server = createServer(async (request, response) => {
       const player = players.get(id);
       const emote = String(data.emote || '');
       const allowedEmotes = new Set(['wave', 'dance', 'clap', 'heart', 'smoke']);
-      if (!client || !player) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (!allowedEmotes.has(emote)) return json(response, 400, { error: 'Emote inválido.' });
       const now = Date.now();
       if (now - client.lastEmoteAt < 650) return json(response, 429, { error: 'Espera um instante antes de outro emote.' });
@@ -511,7 +718,7 @@ const server = createServer(async (request, response) => {
       const recipientClient = clients.get(toId);
       const kind = String(data.kind || '');
       const allowedKinds = new Set(['offer', 'answer', 'candidate']);
-      if (!client || !sender) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || !sender || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (!recipient || !recipientClient) return json(response, 404, { error: 'Jogador não encontrado.' });
       if (!recipient.voiceEnabled) return json(response, 409, { error: 'O outro jogador ainda não ativou a voz.' });
       if (!allowedKinds.has(kind) || !data.payload || typeof data.payload !== 'object') {
@@ -550,6 +757,10 @@ const server = createServer(async (request, response) => {
 
 setInterval(() => {
   for (const client of clients.values()) client.response.write(': keepalive\n\n');
+  const cutoff = Date.now() - 15 * 60 * 1000;
+  for (const [key, cached] of sessionAccounts) if (cached.validUntil <= Date.now()) sessionAccounts.delete(key);
+  for (const [key, attempts] of authRequests) if (!attempts.some(at => at > cutoff)) authRequests.delete(key);
+  for (const [key, attempts] of failedLogins) if (!attempts.some(at => at > cutoff)) failedLogins.delete(key);
 }, 25000).unref();
 
 server.listen(PORT, '0.0.0.0', () => {

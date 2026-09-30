@@ -3,7 +3,7 @@ services:
     name: lowkey-social-mvp-test
     runtime: node
     plan: free
-    buildCommand: node --check server.mjs
+    buildCommand: npm install --omit=dev && node --check server.mjs
     startCommand: node server.mjs
-    healthCheckPath: /
+    healthCheckPath: /healthz
     autoDeploy: true

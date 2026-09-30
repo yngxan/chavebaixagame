@@ -1,6 +1,6 @@
 # LowKey — Praça 001 · Multiplayer LAN
 
-Primeira sala compartilhada do protótipo social LowKey. O servidor é leve, usa apenas recursos nativos do Node.js e não exige instalar pacotes.
+Primeira sala compartilhada do protótipo social LowKey. O servidor usa Node.js; o teste local salva contas em arquivo e a versão online usa PostgreSQL com o pacote `pg`.
 
 ## Abrir a sala
 
@@ -9,13 +9,24 @@ Primeira sala compartilhada do protótipo social LowKey. O servidor é leve, usa
 3. Abra `INICIAR-SALA.bat` e aceite acesso à rede privada se o Windows perguntar.
 4. No navegador do computador anfitrião, abra `http://localhost:4173`.
 5. A janela do servidor mostra também um endereço de rede, por exemplo `http://192.168.0.15:4173`. Envie esse endereço às pessoas conectadas ao mesmo Wi-Fi.
-6. Cada pessoa abre o endereço no Edge ou Chrome e clica em **Começar · Capturar mouse**. No teste local, a voz funciona em `localhost`; para outros aparelhos na rede ou pela internet, use o endereço HTTPS hospedado.
+6. Cada pessoa abre o endereço no Edge ou Chrome, cria sua conta ou entra com usuário e senha e clica em **Começar · Capturar mouse**. No teste local, a voz funciona em `localhost`; para outros aparelhos na rede ou pela internet, use o endereço HTTPS hospedado.
 
 A sala existe enquanto a janela do servidor estiver aberta. O servidor precisa ficar ligado; não feche a janela durante a sessão.
 
 ## Preparar teste pela internet
 
-O arquivo `render.yaml` configura o servidor Node como serviço web gratuito no Render. O projeto é publicado pelo repositório Git conectado ao serviço. A sala de teste está em https://lowkey-social-mvp-test.onrender.com/ e não exige login: quem tiver o endereço consegue entrar. A sala e as mensagens existem só na memória e são apagadas quando o serviço reinicia.
+O arquivo `render.yaml` configura o servidor Node como serviço web gratuito no Render. O projeto é publicado pelo repositório Git conectado ao serviço. A sala de teste está em https://lowkey-social-mvp-test.onrender.com/ e exige uma conta. A sala e as mensagens existem só na memória; contas e aparência são guardadas separadamente no banco.
+
+## Contas e personagem salvo
+
+- Cada jogador cria um usuário único (3 a 20 caracteres: letras sem acento, números, ponto, traço ou underline) e uma senha de 8 a 128 caracteres.
+- Nome, corte, cores, roupa, barba, capuz e chave são salvos automaticamente por conta. Ao entrar novamente, inclusive em outro dispositivo no endereço online, o personagem é restaurado. O nome inicial usa o usuário escolhido.
+- A sessão dura até 30 dias; **Sair** encerra a sessão. Senhas são verificadas por hash scrypt com salt individual, nunca gravadas como texto. O navegador recebe um cookie HttpOnly de sessão.
+- Ainda não há recuperação de senha. Use senhas exclusivas para estas contas de teste.
+- No teste local, `data/accounts.json` guarda hashes e perfis e não é enviado ao Git. Para backup local, copie esse arquivo com o servidor parado.
+- No Render, configure `DATABASE_URL` com a URL **interna** do PostgreSQL da mesma região e workspace. A compilação deve executar `npm install --omit=dev && node --check server.mjs`. O servidor recusa iniciar no Render sem o banco, para evitar perda de contas no disco temporário.
+
+O banco grátis `lowkey-social-accounts` vence em **30 de outubro de 2026**. Migre ou exporte as contas antes dessa data para continuar usando os perfis salvos.
 
 ## Controles
 
@@ -49,6 +60,6 @@ Uma praça 3D blocada flutua no céu, com camadas visíveis de terra e pedra sob
 
 ## Limites desta versão
 
-Na versão local, a sala multiplayer funciona na rede local/Wi-Fi; para sócios em outros lugares, use a cópia hospedada com HTTPS. Não compartilhe a porta diretamente com a internet. O modo direto local usa STUN e pode falhar em redes restritivas. A voz do site público é desabilitada até o SFU central estar configurado, para não indicar falsamente que todos estão conectados. Não há contas, persistência ou moderação; os dados da sala somem quando o servidor reinicia. A sincronização de movimento é simples e adequada para testar o conceito, não é proteção contra trapaças.
+Na versão local, a sala multiplayer funciona na rede local/Wi-Fi; para sócios em outros lugares, use a cópia hospedada com HTTPS. Não compartilhe a porta diretamente com a internet. O modo direto local usa STUN e pode falhar em redes restritivas. A voz do site público é desabilitada até o SFU central estar configurado. Contas e avatares persistem, mas mensagens e posições da sala somem quando o servidor reinicia. Ainda não há recuperação de senha ou moderação. A sincronização de movimento é simples e adequada para testar o conceito, não é proteção contra trapaças.
 
 O protótipo usa Three.js 0.160.0, biblioteca 3D sob licença MIT. O aviso está em `THREE-LICENSE.txt`.

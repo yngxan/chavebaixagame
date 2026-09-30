@@ -1,0 +1,11 @@
+{
+  "name": "lowkey-social-mvp",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "8.23.0"
+  }
+}

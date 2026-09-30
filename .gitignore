@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 node_modules/
+data/
 npm-debug.log*
 .DS_Store
 Thumbs.db
