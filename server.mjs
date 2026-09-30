@@ -728,11 +728,11 @@ const server = createServer(async (request, response) => {
       if (now - client.lastCombatAt < cooldown) return json(response, 429, { error: 'Espera um instante antes de atacar de novo.' });
       client.lastCombatAt = now;
       const combatToken=randomUUID();client.combatToken=combatToken;
-      const yaw = Math.atan2(Math.sin(finite(data.yaw, player.rotation)), Math.cos(finite(data.yaw, player.rotation)));
-      const pitch = Math.max(-1.1, Math.min(1.1, finite(data.pitch, 0)));
+      const facing = Math.atan2(Math.sin(finite(data.facing, player.rotation)), Math.cos(finite(data.facing, player.rotation)));
+      const yaw = -facing, pitch = 0;
       const aim = { x: -Math.sin(yaw) * Math.cos(pitch), y: -Math.sin(pitch), z: Math.cos(yaw) * Math.cos(pitch) };
-      player.rotation=-yaw;
-      broadcast({type:'combat-start',id,kind:action,facing:-yaw,time:now});
+      player.rotation=facing;
+      broadcast({type:'combat-start',id,kind:action,facing,time:now});
       // Resolve the strike/release at the matching animation keyframe, once only.
       setTimeout(() => {
       if(clients.get(id)!==client||players.get(id)!==player||client.combatToken!==combatToken)return;

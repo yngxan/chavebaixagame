@@ -39,11 +39,13 @@ test('multiplayer attacks resolve once at release, obey cooldown and use the aim
     await delay(850);
     await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:0,z:-2}});
     const mark=attacker.events.length;
-    assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'snowball',yaw:0,pitch:0})).status,200);
+    assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'snowball',facing:Math.PI/2,yaw:0,pitch:1})).status,200);
     const throwStart=await waitFor(()=>attacker.events.slice(mark).find(event=>event.type==='combat-start'));
     assert.equal(attacker.events.slice(mark).some(event=>event.type==='combat-throw'),false);
     const release=await waitFor(()=>attacker.events.slice(mark).find(event=>event.type==='combat-throw'));
-    assert.ok(release.projectile.time-throwStart.time>=300);assert.ok(release.projectile.velocity.z>13);
+    assert.ok(release.projectile.time-throwStart.time>=300);assert.ok(release.projectile.velocity.x>13);assert.equal(throwStart.facing,Math.PI/2);
+    assert.ok(Math.abs(release.projectile.velocity.z)<1,'camera yaw must not steer the throw');
+    assert.ok(Math.abs(release.projectile.velocity.y-.8)<.01,'camera pitch must not steer the throw');
     assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'tomato'})).status,400);
     assert.equal(attacker.events.filter(event=>event.type==='combat-punch').length,1);
     assert.equal(attacker.events.filter(event=>event.type==='combat-throw').length,1);
