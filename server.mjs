@@ -195,7 +195,7 @@ const server = createServer(async (request, response) => {
     const angle = existingPlayers.length * 2.399;
     const radius = 2.8 + Math.floor(existingPlayers.length / 10) * 0.5;
     const player = {
-      id, name: 'CHAVE', appearance: { skin: '#f4c9a0', hair: '#703ac1', shirt: '#712cb5', pants: '#25242b', key: true, hood: false },
+      id, name: 'CHAVE', appearance: { skin: '#f4c9a0', hair: '#e2ddce', hairAccent: '#f1e9df', facialHair: '#4a3028', shirt: '#8294b0', pants: '#25242b', shoe: '#414d69', eyeLeft: '#596881', eyeRight: '#8a4c59', gender: 'feminine', hairStyle: 'long', hairFall: 'open', beardStyle: 'none', key: true, hood: false },
       position: { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false, voiceSessionId: null,
     };
     response.writeHead(200, {
@@ -205,7 +205,7 @@ const server = createServer(async (request, response) => {
       'x-accel-buffering': 'no',
     });
     response.flushHeaders();
-    clients.set(id, { response, lastStateAt: 0, lastChatAt: 0, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
+    clients.set(id, { response, lastStateAt: 0, lastChatAt: 0, lastEmoteAt: -Infinity, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
     players.set(id, player);
     send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers });
     broadcast({ type: 'join', player }, id);
@@ -233,8 +233,13 @@ const server = createServer(async (request, response) => {
       const position = data.position || {};
       player.name = cleanName(data.name);
       player.appearance = {
-        skin: cleanColor(appearance.skin, '#f4c9a0'), hair: cleanColor(appearance.hair, '#17151d'),
-        shirt: cleanColor(appearance.shirt, '#25232e'), pants: cleanColor(appearance.pants, '#25242b'),
+        skin: cleanColor(appearance.skin, '#f4c9a0'), hair: cleanColor(appearance.hair, '#17151d'), hairAccent: cleanColor(appearance.hairAccent, '#725047'), facialHair: cleanColor(appearance.facialHair, '#4a3028'),
+        shirt: cleanColor(appearance.shirt, '#25232e'), pants: cleanColor(appearance.pants, '#25242b'), shoe: cleanColor(appearance.shoe, '#414d69'),
+        eyeLeft: cleanColor(appearance.eyeLeft, '#596881'), eyeRight: cleanColor(appearance.eyeRight, '#8a4c59'),
+        gender: ['masculine', 'feminine'].includes(appearance.gender) ? appearance.gender : 'masculine',
+        hairStyle: ['short', 'fringe', 'medium', 'long', 'longBack', 'curly', 'curlyVolume', 'auburnBob', 'dreads', 'shaggy'].includes(appearance.hairStyle) ? appearance.hairStyle : 'fringe',
+        hairFall: appearance.hairFall === 'overEyes' ? 'overEyes' : 'open',
+        beardStyle: ['none', 'goatee', 'mustache', 'full', 'mustacheGoatee'].includes(appearance.beardStyle) ? appearance.beardStyle : 'none',
         key: Boolean(appearance.key), hood: Boolean(appearance.hood),
       };
       player.position = {
@@ -466,6 +471,27 @@ const server = createServer(async (request, response) => {
       if (now - client.lastChatAt < 500) return json(response, 429, { error: 'Espera um pouquinho antes de mandar outra mensagem.' });
       client.lastChatAt = now;
       broadcastWithinChatRadius({ type: 'chat', id: player.id, name: player.name, text, time: now }, player);
+      response.writeHead(204);
+      return response.end();
+    } catch (error) {
+      return json(response, error.statusCode || 400, { error: error.message });
+    }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/emote') {
+    try {
+      const data = await readJson(request, 1024);
+      const id = String(data.id || '');
+      const client = clients.get(id);
+      const player = players.get(id);
+      const emote = String(data.emote || '');
+      const allowedEmotes = new Set(['wave', 'dance', 'clap', 'heart', 'smoke']);
+      if (!client || !player) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!allowedEmotes.has(emote)) return json(response, 400, { error: 'Emote inválido.' });
+      const now = Date.now();
+      if (now - client.lastEmoteAt < 650) return json(response, 429, { error: 'Espera um instante antes de outro emote.' });
+      client.lastEmoteAt = now;
+      broadcast({ type: 'emote', id, emote, time: now }, id);
       response.writeHead(204);
       return response.end();
     } catch (error) {
