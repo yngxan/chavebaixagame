@@ -23,6 +23,7 @@ const PROFILE_FILE = join(ROOT, 'data', 'accounts.json');
 const scrypt = promisify(scryptCallback);
 const clients = new Map();
 const players = new Map();
+const projectiles = new Map();
 const failedLogins = new Map();
 const sessionAccounts = new Map();
 const authRequests = new Map();
@@ -421,7 +422,7 @@ const server = createServer(async (request, response) => {
       'x-accel-buffering': 'no',
     });
     response.flushHeaders();
-    clients.set(id, { response, accountId: authenticatedAccount.id, lastStateAt: 0, lastChatAt: 0, lastEmoteAt: -Infinity, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
+    clients.set(id, { response, accountId: authenticatedAccount.id, lastStateAt: 0, lastChatAt: 0, lastEmoteAt: -Infinity, lastCombatAt: -Infinity, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
     players.set(id, player);
     send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers });
     broadcast({ type: 'join', player }, id);
@@ -706,6 +707,35 @@ const server = createServer(async (request, response) => {
     }
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/combat') {
+    try {
+      const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id), action = String(data.action || '');
+      if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
+      if (!['punch', 'tomato', 'snowball'].includes(action)) return json(response, 400, { error: 'Ação inválida.' });
+      const now = Date.now(), cooldown = action === 'punch' ? 480 : 850;
+      if (now - client.lastCombatAt < cooldown) return json(response, 429, { error: 'Espera um instante antes de atacar de novo.' });
+      client.lastCombatAt = now;
+      const aim = Math.atan2(Math.sin(finite(data.rotation, player.rotation)), Math.cos(finite(data.rotation, player.rotation)));
+      if (action === 'punch') {
+        const fx = Math.sin(aim), fz = Math.cos(aim), reach = 1.55, cone = Math.cos(Math.PI / 3);
+        let target = null, nearest = Infinity;
+        for (const candidate of players.values()) {
+          if (candidate.id === id || Math.abs(candidate.position.y - player.position.y) > 1.25) continue;
+          const dx = candidate.position.x - player.position.x, dz = candidate.position.z - player.position.z, distance = Math.hypot(dx, dz);
+          if (distance < .01 || distance > reach || (dx * fx + dz * fz) / distance < cone || distance >= nearest) continue;
+          target = candidate; nearest = distance;
+        }
+        const dx = target ? target.position.x - player.position.x : fx, dz = target ? target.position.z - player.position.z : fz, length = Math.hypot(dx, dz) || 1;
+        broadcast({ type: 'combat-punch', id, targetId: target?.id || null, impulse: target ? { x: dx / length * 2.4, z: dz / length * 2.4 } : null, time: now });
+      } else {
+        const x = Math.sin(aim), z = Math.cos(aim), projectile = { id: randomUUID(), ownerId: id, kind: action, position: { x: player.position.x + x * .58, y: player.position.y + .94, z: player.position.z + z * .58 }, velocity: { x: x * 12, y: 2.7, z: z * 12 }, lastAt: now, createdAt: now };
+        projectiles.set(projectile.id, projectile);
+        broadcast({ type: 'combat-throw', projectile: { id: projectile.id, ownerId: id, kind: action, position: projectile.position, velocity: projectile.velocity, time: now } });
+      }
+      return json(response, 200, { ok: true });
+    } catch (error) { return json(response, error.statusCode || 400, { error: error.message || 'Não consegui completar a ação.' }); }
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/voice-signal') {
     try {
       if (hasSfuConfig()) return json(response, 410, { error: 'A sala usa voz centralizada.' });
@@ -762,6 +792,34 @@ setInterval(() => {
   for (const [key, attempts] of authRequests) if (!attempts.some(at => at > cutoff)) authRequests.delete(key);
   for (const [key, attempts] of failedLogins) if (!attempts.some(at => at > cutoff)) failedLogins.delete(key);
 }, 25000).unref();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [projectileId, projectile] of projectiles) {
+    const dt = Math.min(.08, Math.max(.005, (now - projectile.lastAt) / 1000));
+    projectile.lastAt = now;
+    const from = projectile.position, to = { x: from.x + projectile.velocity.x * dt, y: from.y + projectile.velocity.y * dt, z: from.z + projectile.velocity.z * dt };
+    projectile.velocity.y -= 9.8 * dt;
+    let hit = null, bestDistance = Infinity;
+    for (const target of players.values()) {
+      if (target.id === projectile.ownerId || target.position.y < -.2) continue;
+      const center = { x: target.position.x, y: target.position.y + 1.02, z: target.position.z };
+      const sx = to.x - from.x, sy = to.y - from.y, sz = to.z - from.z, lengthSq = sx * sx + sy * sy + sz * sz;
+      const t = lengthSq ? Math.max(0, Math.min(1, ((center.x - from.x) * sx + (center.y - from.y) * sy + (center.z - from.z) * sz) / lengthSq)) : 0;
+      const dx = from.x + sx * t - center.x, dy = from.y + sy * t - center.y, dz = from.z + sz * t - center.z, distanceSq = dx * dx + dy * dy + dz * dz;
+      if (distanceSq < .48 * .48 && distanceSq < bestDistance) { hit = target; bestDistance = distanceSq; }
+    }
+    projectile.position = to;
+    if (hit) {
+      const speed = projectile.kind === 'snowball' ? 1.35 : .85, horizontalSpeed = Math.hypot(projectile.velocity.x, projectile.velocity.z) || 1;
+      broadcast({ type: 'combat-impact', id: projectile.id, ownerId: projectile.ownerId, kind: projectile.kind, x: to.x, y: to.y, z: to.z, targetId: hit.id, impulse: { x: projectile.velocity.x / horizontalSpeed * speed, z: projectile.velocity.z / horizontalSpeed * speed }, time: now });
+      projectiles.delete(projectileId);
+    } else if (to.y <= .12 || now - projectile.createdAt > 2600 || Math.abs(to.x) > 100 || Math.abs(to.z) > 100) {
+      broadcast({ type: 'combat-impact', id: projectile.id, ownerId: projectile.ownerId, kind: projectile.kind, x: to.x, y: Math.max(0, to.y), z: to.z, targetId: null, time: now });
+      projectiles.delete(projectileId);
+    }
+  }
+}, 40).unref();
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`LowKey Praça 001 — sala multiplayer pronta.`);
