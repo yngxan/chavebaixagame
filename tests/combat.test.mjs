@@ -20,12 +20,13 @@ test('camera can look vertically up and down without flipping',()=>{
 });
 
 test('first-person fist extends forward and returns to its resting position',()=>{
-  const hand=joint();hand.position.set=function(x,y,z){Object.assign(this,{x,y,z});};hand.userData.ball={visible:false};
+  const hand=joint();hand.position.set=function(x,y,z){Object.assign(this,{x,y,z});};hand.scale={setScalar(value){this.value=value;}};hand.userData.ball={visible:false};const camera={aspect:16/9};
   const action={kind:'punch',startedAt:0,until:520};
-  const update=loadFunction(html,'updateFirstPersonHand',{firstPersonHand:hand,localCombat:action,combatPoseAt:poseAt,walkTime:0,currentMoveSpeed:0});
+  const update=loadFunction(html,'updateFirstPersonHand',{firstPersonHand:hand,localCombat:action,combatPoseAt:poseAt,walkTime:0,currentMoveSpeed:0,camera});
   update(218,true);assert.ok(hand.position.z<-.8);assert.ok(hand.position.y>-.22);assert.equal(hand.visible,true);
   update(520,true);assert.equal(hand.position.x,.34);assert.equal(hand.position.y,-.32);assert.equal(hand.position.z,-.62);
   update(520,false);assert.equal(hand.visible,false);
+  camera.aspect=390/844;update(520,true);assert.ok(hand.position.x<.12);assert.equal(hand.scale.value,.55);
 });
 
 test('both action cycles stay bounded, continuous and return to neutral',()=>{

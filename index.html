@@ -639,7 +639,8 @@
     const action=localCombat,p=action?Math.max(0,Math.min(1,(now-action.startedAt)/(action.until-action.startedAt))):1;
     const pose=action?combatPoseAt(action.kind,p):{shoulder:0,elbow:0,outward:0},extension=Math.max(0,Math.min(1,-pose.shoulder/1.5));
     const bob=Math.sin(walkTime*2)*Math.min(currentMoveSpeed,.8)*.012;
-    group.position.set(.34-extension*.18,-.32+extension*.12+bob,-.62-extension*.23);
+    const horizontalFit=Math.min(1,camera.aspect/1.6);group.scale.setScalar(Math.max(.55,Math.min(1,camera.aspect/.95)));
+    group.position.set((.34-extension*.18)*horizontalFit,-.32+extension*.12+bob,-.62-extension*.23);
     group.rotation.set(-.12-extension*.45,-extension*.15,.08-extension*.1);
     group.userData.ball.visible=action?.kind==='snowball'&&p<.48;
   }
