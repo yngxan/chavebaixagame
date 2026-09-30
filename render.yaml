@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: lowkey-social-mvp-test
+    runtime: node
+    plan: free
+    buildCommand: node --check server.mjs
+    startCommand: node server.mjs
+    healthCheckPath: /
+    autoDeploy: true
