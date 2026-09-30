@@ -9,9 +9,14 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PORT = Number(process.env.PORT || 4173);
 const MAX_PLAYERS = 32;
 const CHAT_RADIUS = 12;
+const VOICE_RADIUS = CHAT_RADIUS * 1.5;
 const SFU_API = 'https://rtc.live.cloudflare.com/v1';
 const SFU_APP_ID = process.env.CF_SFU_APP_ID || '';
 const SFU_APP_SECRET = process.env.CF_SFU_APP_SECRET || '';
+const TURN_KEY_ID = process.env.CF_TURN_KEY_ID || '';
+const TURN_API_TOKEN = process.env.CF_TURN_API_TOKEN || '';
+const DEFAULT_ICE_SERVERS = [{ urls: 'stun:stun.cloudflare.com:3478' }];
+const TURN_CREDENTIAL_TTL = 86400;
 const clients = new Map();
 const players = new Map();
 const allowedFiles = new Map([
@@ -41,7 +46,7 @@ function withinVoiceRadius(origin, recipient) {
     origin.position.x - recipient.position.x,
     origin.position.y - recipient.position.y,
     origin.position.z - recipient.position.z,
-  ) <= CHAT_RADIUS;
+  ) <= VOICE_RADIUS;
 }
 function cleanName(value) {
   return String(value || 'CHAVE').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, 16) || 'CHAVE';
@@ -99,10 +104,40 @@ async function callSfu(path, method = 'POST', body) {
   let result = {};
   try { result = await response.json(); } catch { /* a resposta sem JSON será tratada abaixo */ }
   if (!response.ok || result.errorCode || result.errors?.length) {
-    console.warn(`Cloudflare SFU recusou a operação (${response.status}${result.errorCode ? ` · ${result.errorCode}` : ''}).`);
+    const operation = path === '/sessions/new' ? path : path.replace(/^\/sessions\/[^/]+/, '/sessions/:sessionId');
+    console.warn(`Cloudflare SFU recusou ${method} ${operation} (${response.status}${result.errorCode ? ` · ${result.errorCode}` : ''}).`);
     throw Object.assign(new Error('Não consegui completar a conexão central de voz.'), { statusCode: 502 });
   }
   return result;
+}
+async function getTurnIceServers(client) {
+  if (!TURN_KEY_ID || !TURN_API_TOKEN) return { iceServers: DEFAULT_ICE_SERVERS, turnEnabled: false };
+  if (client.turnIceServers?.length && client.turnIceExpiresAt > Date.now() + 30 * 60 * 1000) {
+    return { iceServers: client.turnIceServers, turnEnabled: true };
+  }
+  if (client.turnIceRequest) return client.turnIceRequest;
+  client.turnIceRequest = (async () => {
+    const response = await fetch(`${SFU_API}/turn/keys/${encodeURIComponent(TURN_KEY_ID)}/credentials/generate-ice-servers`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TURN_API_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ttl: TURN_CREDENTIAL_TTL }),
+      signal: AbortSignal.timeout(8000),
+    });
+    let result = {};
+    try { result = await response.json(); } catch { /* resposta inválida */ }
+    const servers = Array.isArray(result.iceServers) ? result.iceServers.filter(server => server?.urls) : [];
+    if (!response.ok || !servers.length) {
+      console.warn(`Cloudflare TURN não gerou credenciais (${response.status}). Usando STUN como fallback.`);
+      return { iceServers: DEFAULT_ICE_SERVERS, turnEnabled: false };
+    }
+    client.turnIceServers = servers;
+    client.turnIceExpiresAt = Date.now() + TURN_CREDENTIAL_TTL * 1000;
+    return { iceServers: servers, turnEnabled: true };
+  })().catch(error => {
+    console.warn(`Cloudflare TURN indisponível (${error.name || 'erro'}). Usando STUN como fallback.`);
+    return { iceServers: DEFAULT_ICE_SERVERS, turnEnabled: false };
+  }).finally(() => { client.turnIceRequest = null; });
+  return client.turnIceRequest;
 }
 async function closeSfuTracks(sessionId, mids) {
   if (!sessionId || !mids?.length || !hasSfuConfig()) return;
@@ -112,15 +147,27 @@ async function closeSfuTracks(sessionId, mids) {
     });
   } catch { /* sessões que expiraram já não têm mídia para encaminhar */ }
 }
-async function cleanupSfuClient(client) {
+function queueVoiceMutation(client, operation) {
+  const next = (client.voiceMutationQueue || Promise.resolve()).then(operation, operation);
+  client.voiceMutationQueue = next.catch(() => {});
+  return next;
+}
+async function cleanupSfuPublisher(client) {
   if (!client) return;
-  await Promise.all([
-    closeSfuTracks(client.voicePublishSessionId, client.voicePublishMid ? [client.voicePublishMid] : []),
-    ...[...(client.voiceSubscriptions?.values() || [])].map(subscription => closeSfuTracks(subscription.sessionId, subscription.mids)),
-  ]);
+  await closeSfuTracks(client.voicePublishSessionId, client.voicePublishMid ? [client.voicePublishMid] : []);
   client.voicePublishSessionId = null;
   client.voicePublishMid = null;
   client.voiceReady = false;
+}
+async function cleanupSfuClient(client) {
+  if (!client) return;
+  const receiverSessionId = client.voiceReceiveSessionId;
+  const receiverMids = [...(client.voiceSubscriptions?.values() || [])].flatMap(subscription => subscription.mids || []);
+  await Promise.all([
+    cleanupSfuPublisher(client),
+    closeSfuTracks(receiverSessionId, receiverMids),
+  ]);
+  client.voiceReceiveSessionId = null;
   client.voiceSubscriptions?.clear();
 }
 
@@ -130,6 +177,16 @@ const server = createServer(async (request, response) => {
     const localHost = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname);
     const mode = hasSfuConfig() ? 'sfu' : localHost ? 'direct' : 'unconfigured';
     return json(response, 200, { mode, centralized: mode === 'sfu' });
+  }
+  if (request.method === 'POST' && url.pathname === '/api/voice/ice-servers') {
+    try {
+      const data = await readJson(request, 2048);
+      const client = clients.get(String(data.id || ''));
+      if (!client) return json(response, 401, { error: 'Jogador não conectado.' });
+      return json(response, 200, await getTurnIceServers(client));
+    } catch (error) {
+      return json(response, 502, { error: 'Não consegui preparar os servidores de rede para a voz.' });
+    }
   }
   if (request.method === 'GET' && url.pathname === '/api/events') {
     if (clients.size >= MAX_PLAYERS) return json(response, 503, { error: 'Sala cheia (limite: 32 jogadores).' });
@@ -148,7 +205,7 @@ const server = createServer(async (request, response) => {
       'x-accel-buffering': 'no',
     });
     response.flushHeaders();
-    clients.set(id, { response, lastStateAt: 0, lastChatAt: 0, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceSubscriptions: new Map() });
+    clients.set(id, { response, lastStateAt: 0, lastChatAt: 0, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
     players.set(id, player);
     send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers });
     broadcast({ type: 'join', player }, id);
@@ -156,7 +213,7 @@ const server = createServer(async (request, response) => {
       const current = clients.get(id);
       if (!current || current.response !== response) return;
       clients.delete(id);
-      void cleanupSfuClient(current);
+      void queueVoiceMutation(current, () => cleanupSfuClient(current));
       players.delete(id);
       broadcast({ type: 'leave', id });
     });
@@ -211,7 +268,7 @@ const server = createServer(async (request, response) => {
       if (data.sessionDescription?.type !== 'offer' || typeof data.sessionDescription?.sdp !== 'string' || !data.sessionDescription.sdp || data.sessionDescription.sdp.length > 24000 || typeof data.mid !== 'string' || data.mid.length > 12) {
         return json(response, 400, { error: 'Oferta de voz inválida.' });
       }
-      await cleanupSfuClient(client);
+      await cleanupSfuPublisher(client);
       const session = await callSfu('/sessions/new');
       if (typeof session.sessionId !== 'string') throw Object.assign(new Error('Sessão de voz inválida.'), { statusCode: 502 });
       client.voicePublishSessionId = session.sessionId;
@@ -267,36 +324,48 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'POST' && url.pathname === '/api/voice/sfu/subscribe') {
     try {
-      const data = await readJson(request, 2048);
+      const data = await readJson(request, 8192);
       const id = String(data.id || '');
-      const toId = String(data.to || '');
       const client = clients.get(id);
-      const listener = players.get(id);
-      const speaker = players.get(toId);
-      const speakerClient = clients.get(toId);
-      if (!client || !listener) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (!client || !players.has(id)) return json(response, 401, { error: 'Jogador não conectado.' });
       if (!hasSfuConfig()) return json(response, 503, { error: 'Voz centralizada ainda não configurada no servidor.' });
-      if (!speaker || !speakerClient || !speaker.voiceEnabled || !speaker.voiceSessionId || !speakerClient.voicePublishSessionId) return json(response, 409, { error: 'Esse jogador não está transmitindo voz.' });
-      if (!listener.voiceEnabled || !withinVoiceRadius(listener, speaker)) return json(response, 403, { error: 'Jogador fora do raio de voz.' });
-      if (client.voiceSubscriptions.has(toId)) return json(response, 409, { error: 'A conexão de áudio já foi iniciada.' });
-      if (!allowSfuSession(client)) return json(response, 429, { error: 'Muitas conexões de voz. Aguarde um minuto.' });
-      const publishingSessionId = speaker.voiceSessionId;
-      const session = await callSfu('/sessions/new');
-      if (typeof session.sessionId !== 'string') throw Object.assign(new Error('Sessão de recepção inválida.'), { statusCode: 502 });
-      const subscription = await callSfu(`/sessions/${encodeURIComponent(session.sessionId)}/tracks/new`, 'POST', {
-        tracks: [{ location: 'remote', sessionId: speaker.voiceSessionId, trackName: 'lowkey-mic' }],
+      return await queueVoiceMutation(client, async () => {
+        const requestedIds = Array.isArray(data.toIds) ? data.toIds : data.to ? [data.to] : [];
+        const toIds = [...new Set(requestedIds.map(value => String(value || '')).filter(toId => toId && toId !== id))].slice(0, MAX_PLAYERS - 1);
+        if (!toIds.length) return json(response, 400, { error: 'Nenhum jogador para conectar.' });
+        if (client.voiceReceiveSessionId && data.sessionId !== client.voiceReceiveSessionId) return json(response, 409, { error: 'A sessão de recepção mudou. Reconecte o áudio da sala.' });
+        if (!client.voiceReceiveSessionId && data.sessionId) return json(response, 409, { error: 'A sessão de recepção expirou. Reconecte o áudio da sala.' });
+        const sources = toIds.map(toId => ({ toId, player: players.get(toId), sourceClient: clients.get(toId) }))
+          .filter(source => source.player?.voiceEnabled && source.player.voiceSessionId && source.sourceClient?.voiceReady && source.sourceClient.voicePublishSessionId === source.player.voiceSessionId && !client.voiceSubscriptions.has(source.toId));
+        if (!sources.length) return json(response, 425, { error: 'Aguardando um microfone ativo para conectar o áudio.' });
+        if (!client.voiceReceiveSessionId && !allowSfuSession(client)) return json(response, 429, { error: 'Muitas reconexões de voz. Aguarde um minuto.' });
+        let sessionId = client.voiceReceiveSessionId;
+        if (!sessionId) {
+          const session = await callSfu('/sessions/new');
+          if (typeof session.sessionId !== 'string') throw Object.assign(new Error('Sessão de recepção inválida.'), { statusCode: 502 });
+          sessionId = session.sessionId;
+          client.voiceReceiveSessionId = sessionId;
+        }
+        const sourceBySessionId = new Map(sources.map(source => [source.player.voiceSessionId, source.toId]));
+        const subscription = await callSfu(`/sessions/${encodeURIComponent(sessionId)}/tracks/new`, 'POST', {
+          tracks: sources.map(source => ({ location: 'remote', sessionId: source.player.voiceSessionId, trackName: 'lowkey-mic' })),
+        });
+        if (subscription.sessionDescription?.type !== 'offer' || typeof subscription.sessionDescription?.sdp !== 'string') {
+          throw Object.assign(new Error('O SFU não conseguiu preparar o áudio.'), { statusCode: 502 });
+        }
+        const tracks = (subscription.tracks || []).map(track => {
+          const playerId = sourceBySessionId.get(track.sessionId);
+          if (playerId && typeof track.mid === 'string' && track.mid && !track.errorCode) {
+            client.voiceSubscriptions.set(playerId, { sessionId, mids: [track.mid], publisherSessionId: track.sessionId });
+          }
+          return { playerId: playerId || null, publisherSessionId: track.sessionId || null, mid: track.mid || null, errorCode: track.errorCode || null, errorDescription: track.errorDescription || null };
+        });
+        if (!tracks.some(track => track.playerId && track.mid && !track.errorCode)) {
+          if (client.voiceReceiveSessionId === sessionId && ![...client.voiceSubscriptions.values()].some(subscription => subscription.sessionId === sessionId)) client.voiceReceiveSessionId = null;
+          throw Object.assign(new Error('O SFU não conseguiu assinar as vozes disponíveis.'), { statusCode: 502 });
+        }
+        return json(response, 200, { sessionId, sessionDescription: subscription.sessionDescription, tracks });
       });
-      if (subscription.tracks?.some(track => track.errorCode) || subscription.sessionDescription?.type !== 'offer' || typeof subscription.sessionDescription?.sdp !== 'string') {
-        await closeSfuTracks(session.sessionId, (subscription.tracks || []).map(track => track.mid).filter(mid => typeof mid === 'string'));
-        throw Object.assign(new Error('O SFU não conseguiu preparar o áudio.'), { statusCode: 502 });
-      }
-      const mids = (subscription.tracks || []).map(track => track.mid).filter(mid => typeof mid === 'string');
-      if (clients.get(id) !== client || players.get(id) !== listener || clients.get(toId) !== speakerClient || players.get(toId) !== speaker || !listener.voiceEnabled || !speaker.voiceEnabled || speaker.voiceSessionId !== publishingSessionId || !withinVoiceRadius(listener, speaker)) {
-        await closeSfuTracks(session.sessionId, mids);
-        return json(response, 409, { error: 'A sala ou a distância mudou durante a conexão.' });
-      }
-      client.voiceSubscriptions.set(toId, { sessionId: session.sessionId, mids });
-      return json(response, 200, { sessionId: session.sessionId, sessionDescription: subscription.sessionDescription });
     } catch (error) {
       return json(response, error.statusCode || 502, { error: error.message || 'Falha ao assinar o áudio.' });
     }
@@ -304,20 +373,18 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'POST' && url.pathname === '/api/voice/sfu/renegotiate') {
     try {
-      const data = await readJson(request, 32768);
+      const data = await readJson(request, 128000);
       const id = String(data.id || '');
-      const toId = String(data.to || '');
       const sessionId = String(data.sessionId || '');
       const client = clients.get(id);
-      const listener = players.get(id);
-      const speaker = players.get(toId);
-      const subscription = client?.voiceSubscriptions.get(toId);
-      if (!client || !listener) return json(response, 401, { error: 'Jogador não conectado.' });
-      if (!subscription || subscription.sessionId !== sessionId || !speaker?.voiceEnabled || !withinVoiceRadius(listener, speaker)) return json(response, 403, { error: 'A assinatura de voz não está mais autorizada.' });
-      if (data.sessionDescription?.type !== 'answer' || typeof data.sessionDescription?.sdp !== 'string' || data.sessionDescription.sdp.length > 24000) return json(response, 400, { error: 'Resposta de voz inválida.' });
-      await callSfu(`/sessions/${encodeURIComponent(sessionId)}/renegotiate`, 'PUT', { sessionDescription: data.sessionDescription });
-      response.writeHead(204);
-      return response.end();
+      if (!client || !players.has(id)) return json(response, 401, { error: 'Jogador não conectado.' });
+      if (data.sessionDescription?.type !== 'answer' || typeof data.sessionDescription?.sdp !== 'string' || data.sessionDescription.sdp.length > 100000) return json(response, 400, { error: 'Resposta de voz inválida.' });
+      return await queueVoiceMutation(client, async () => {
+        if (!client.voiceReceiveSessionId || client.voiceReceiveSessionId !== sessionId) return json(response, 409, { error: 'A sessão de recepção expirou.' });
+        await callSfu(`/sessions/${encodeURIComponent(sessionId)}/renegotiate`, 'PUT', { sessionDescription: data.sessionDescription });
+        response.writeHead(204);
+        return response.end();
+      });
     } catch (error) {
       return json(response, error.statusCode || 502, { error: error.message || 'Falha ao confirmar o áudio.' });
     }
@@ -329,13 +396,15 @@ const server = createServer(async (request, response) => {
       const client = clients.get(String(data.id || ''));
       const toId = String(data.to || '');
       if (!client) return json(response, 401, { error: 'Jogador não conectado.' });
-      const subscription = client.voiceSubscriptions.get(toId);
-      if (subscription && (!data.sessionId || data.sessionId === subscription.sessionId)) {
-        client.voiceSubscriptions.delete(toId);
-        await closeSfuTracks(subscription.sessionId, subscription.mids);
-      }
-      response.writeHead(204);
-      return response.end();
+      return await queueVoiceMutation(client, async () => {
+        const subscription = client.voiceSubscriptions.get(toId);
+        if (subscription && client.voiceReceiveSessionId === subscription.sessionId && (!data.sessionId || data.sessionId === subscription.sessionId)) {
+          client.voiceSubscriptions.delete(toId);
+          await closeSfuTracks(subscription.sessionId, subscription.mids);
+        }
+        response.writeHead(204);
+        return response.end();
+      });
     } catch (error) {
       return json(response, error.statusCode || 502, { error: error.message || 'Falha ao fechar o áudio.' });
     }
@@ -350,22 +419,38 @@ const server = createServer(async (request, response) => {
       if (!client || !player) return json(response, 401, { error: 'Jogador não conectado.' });
       const publishSessionId = client.voicePublishSessionId;
       const publishMid = client.voicePublishMid;
-      const subscriptions = [...client.voiceSubscriptions.values()];
       client.voicePublishSessionId = null;
       client.voicePublishMid = null;
       client.voiceReady = false;
-      client.voiceSubscriptions.clear();
       player.voiceSessionId = null;
       player.voiceEnabled = false;
       broadcast({ type: 'state', player }, player.id);
-      await Promise.all([
-        closeSfuTracks(publishSessionId, publishMid ? [publishMid] : []),
-        ...subscriptions.map(subscription => closeSfuTracks(subscription.sessionId, subscription.mids)),
-      ]);
+      await closeSfuTracks(publishSessionId, publishMid ? [publishMid] : []);
       response.writeHead(204);
       return response.end();
     } catch (error) {
       return json(response, error.statusCode || 502, { error: error.message || 'Falha ao desligar a voz.' });
+    }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/voice/sfu/stop-listening') {
+    try {
+      const data = await readJson(request, 2048);
+      const client = clients.get(String(data.id || ''));
+      if (!client) return json(response, 401, { error: 'Jogador não conectado.' });
+      return await queueVoiceMutation(client, async () => {
+        const sessionId = client.voiceReceiveSessionId;
+        if (sessionId && (!data.sessionId || data.sessionId === sessionId)) {
+          const mids = [...client.voiceSubscriptions.values()].flatMap(subscription => subscription.mids || []);
+          client.voiceReceiveSessionId = null;
+          client.voiceSubscriptions.clear();
+          await closeSfuTracks(sessionId, mids);
+        }
+        response.writeHead(204);
+        return response.end();
+      });
+    } catch (error) {
+      return json(response, error.statusCode || 502, { error: error.message || 'Falha ao fechar a recepção de voz.' });
     }
   }
 
