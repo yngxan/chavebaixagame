@@ -106,6 +106,26 @@
   .emote-bar{top:45%}.emote-button{width:32px;min-width:32px;height:32px}
 }
 @media(pointer:coarse){.controls{display:none}}
+@media (orientation:landscape) and (pointer:coarse){
+  .status{display:none}
+  .brand{top:8px;left:10px;padding:7px 9px}.hud-actions{top:8px;right:10px}
+  #desktopChatToggle{display:none}.chat-launch{display:grid;left:10px;top:58px}
+  .editor{left:auto;right:8px;top:54px;bottom:8px;width:min(340px,40vw);max-height:none;padding:11px}
+  .editor p{font-size:9px;margin-bottom:8px}.field{margin-bottom:8px}.field-label{font-size:8px;margin-bottom:5px}.choice-track .choice-pill{min-height:34px}
+  .rgb-panel{grid-template-columns:1fr 1fr}.world-note{font-size:8px;padding:7px}
+  .chat{left:8px;top:54px;bottom:auto;width:min(320px,38vw);max-height:70dvh}
+  .messages{height:clamp(70px,24dvh,140px)}
+  .talk-btn{top:54px;right:10px;bottom:auto;max-width:132px;padding:7px 9px;font-size:8px}.talk-btn-hint{display:none}
+  .controls{display:none}
+  .emote-bar{top:50%;right:9px;bottom:auto;transform:translateY(-50%);gap:4px;padding:4px}
+  .emote-button{width:36px;min-width:36px;height:36px}
+  .touch-controls{display:block;position:absolute;inset:0;pointer-events:none;z-index:2}
+  .joystick{position:absolute;bottom:calc(8px + env(safe-area-inset-bottom));width:clamp(88px,18vh,122px);height:clamp(88px,18vh,122px);border:1px solid rgba(255,255,255,.25);border-radius:50%;background:radial-gradient(circle,rgba(11,20,15,.23),rgba(8,15,12,.52));box-shadow:inset 0 0 0 7px rgba(255,255,255,.035),0 8px 24px rgba(0,0,0,.18);pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none}
+  #moveStick{left:12px}#lookStick{right:12px}
+  .joystick:before{content:attr(data-label);position:absolute;left:50%;bottom:6px;transform:translateX(-50%);font-size:7px;font-weight:800;letter-spacing:1px;color:rgba(245,249,238,.62);pointer-events:none}
+  .stick-knob{position:absolute;left:50%;top:50%;width:42%;height:42%;transform:translate(-50%,-50%);border:1px solid rgba(212,255,0,.6);border-radius:50%;background:radial-gradient(circle at 35% 30%,rgba(212,255,0,.48),rgba(66,85,29,.8));box-shadow:0 4px 12px rgba(0,0,0,.35);pointer-events:none}
+  .touch-jump{position:absolute;right:calc(clamp(88px,18vh,122px) + 26px);bottom:calc(23px + env(safe-area-inset-bottom));width:46px;height:46px;border:1px solid rgba(212,255,0,.55);border-radius:50%;background:rgba(12,19,14,.82);color:var(--acid);font-size:20px;font-weight:900;box-shadow:0 5px 15px rgba(0,0,0,.3);pointer-events:auto;touch-action:none}
+}
 </style>
 </head>
 <body>
@@ -720,7 +740,7 @@
   function applyIdleBreath(body,head,blend,time){const inhale=Math.sin(time*2.25),lift=(inhale+1)*.5*blend;body.scale.set(1+.015*lift,1+.012*lift,1+.023*lift);head.position.y=-.15+.017*lift;head.rotation.z=Math.sin(time*.8)*.014*blend;}
   function syncHeadToRunLean(body,head){const lean=body.rotation.x;head.rotation.x=lean;head.position.z=-.15*Math.sin(lean);}
   const toast=document.getElementById('toast');function showToast(text){toast.textContent=text;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),1900);}
-  function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.04);yaw+=touchAxes.lookX*2.1*dt;pitch=Math.max(-.12,Math.min(1.05,pitch+touchAxes.lookY*1.55*dt));const moving=new THREE.Vector3();if(keys.has('KeyW')||keys.has('ArrowUp'))moving.z-=1;if(keys.has('KeyS')||keys.has('ArrowDown'))moving.z+=1;if(keys.has('KeyA')||keys.has('ArrowLeft'))moving.x-=1;if(keys.has('KeyD')||keys.has('ArrowRight'))moving.x+=1;moving.x-=touchAxes.moveX;moving.z+=touchAxes.moveY;
+  function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.04);yaw+=touchAxes.lookX*2.1*dt;pitch=Math.max(-.12,Math.min(1.05,pitch+touchAxes.lookY*1.55*dt));const moving=new THREE.Vector3();if(keys.has('KeyW')||keys.has('ArrowUp'))moving.z-=1;if(keys.has('KeyS')||keys.has('ArrowDown'))moving.z+=1;if(keys.has('KeyA')||keys.has('ArrowLeft'))moving.x-=1;if(keys.has('KeyD')||keys.has('ArrowRight'))moving.x+=1;moving.x+=touchAxes.moveX;moving.z+=touchAxes.moveY;
     const desiredVelocity=new THREE.Vector3(),inputDirection=new THREE.Vector3(),inputPower=Math.min(1,moving.length());const hasInput=moving.lengthSq()>0;if(hasInput){moving.normalize();const forward=new THREE.Vector3(-Math.sin(yaw),0,Math.cos(yaw));const right=new THREE.Vector3(Math.cos(yaw),0,Math.sin(yaw));inputDirection.copy(right).multiplyScalar(-moving.x).add(forward.multiplyScalar(-moving.z)).normalize();const speed=(keys.has('ShiftLeft')||keys.has('ShiftRight'))?9:5.8*Math.max(.18,inputPower);desiredVelocity.copy(inputDirection).multiplyScalar(speed);}
     if(onGround)moveVelocity.lerp(desiredVelocity,1-Math.exp(-(hasInput?11:15)*dt));else if(hasInput){const airLimit=9+Math.min(bhopChain*.55,2.2),airSpeed=Math.min(airLimit,Math.max(moveVelocity.length(),(keys.has('ShiftLeft')||keys.has('ShiftRight'))?9:5.8));desiredVelocity.copy(inputDirection).multiplyScalar(airSpeed);moveVelocity.lerp(desiredVelocity,1-Math.exp(-12*dt));if(moveVelocity.length()>airLimit)moveVelocity.setLength(airLimit);}else moveVelocity.multiplyScalar(Math.exp(-.65*dt));const requestedX=moveVelocity.x*dt,requestedZ=moveVelocity.z*dt,collision=moveWithWorldCollision(avatar.position,requestedX,requestedZ);tryStepUp();if(collision.x)moveVelocity.x=0;if(collision.z)moveVelocity.z=0;const actualSpeed=moveVelocity.length();currentMoveSpeed=actualSpeed;const running=(keys.has('ShiftLeft')||keys.has('ShiftRight'))&&actualSpeed>6.8;if(actualSpeed>.16){avatar.rotation.y=Math.atan2(moveVelocity.x,moveVelocity.z);walkTime+=dt*actualSpeed;legs[0].rotation.x=Math.sin(walkTime)*.5;legs[1].rotation.x=-Math.sin(walkTime)*.5;if(running){bodyGroup.rotation.x=THREE.MathUtils.damp(bodyGroup.rotation.x,.22,9,dt);arms[0].rotation.x=1.22+Math.sin(walkTime)*.045;arms[1].rotation.x=1.22-Math.sin(walkTime)*.045;arms[0].rotation.z=-.08;arms[1].rotation.z=.08;}else{bodyGroup.rotation.x=THREE.MathUtils.damp(bodyGroup.rotation.x,0,9,dt);arms[0].rotation.x=-Math.sin(walkTime)*.38;arms[1].rotation.x=Math.sin(walkTime)*.38;arms[0].rotation.z*=.78;arms[1].rotation.z*=.78;}}
     else{bodyGroup.rotation.x=THREE.MathUtils.damp(bodyGroup.rotation.x,0,8,dt);legs.forEach(l=>l.rotation.x*=.75);arms.forEach(a=>{a.rotation.x*=.75;a.rotation.z*=.78;});}
