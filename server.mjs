@@ -83,7 +83,7 @@ const server = createServer(async (request, response) => {
     const radius = 2.8 + Math.floor(existingPlayers.length / 10) * 0.5;
     const player = {
       id, name: 'CHAVE', appearance: { skin: '#f4c9a0', hair: '#703ac1', shirt: '#712cb5', pants: '#25242b', key: true, hood: false },
-      position: { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0,
+      position: { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false,
     };
     response.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -132,6 +132,7 @@ const server = createServer(async (request, response) => {
       player.speed = Math.max(0, Math.min(9, finite(data.speed)));
       player.walking = Boolean(data.walking) && player.speed > 0.2;
       player.jumping = Boolean(data.jumping) || player.position.y > 0.05;
+      player.voiceEnabled = Boolean(data.voiceEnabled);
       broadcast({ type: 'state', player }, player.id);
       response.writeHead(204);
       return response.end();
@@ -173,6 +174,7 @@ const server = createServer(async (request, response) => {
       const allowedKinds = new Set(['offer', 'answer', 'candidate']);
       if (!client || !sender) return json(response, 401, { error: 'Jogador não conectado.' });
       if (!recipient || !recipientClient) return json(response, 404, { error: 'Jogador não encontrado.' });
+      if (!recipient.voiceEnabled) return json(response, 409, { error: 'O outro jogador ainda não ativou a voz.' });
       if (!allowedKinds.has(kind) || !data.payload || typeof data.payload !== 'object') {
         return json(response, 400, { error: 'Sinal de voz inválido.' });
       }

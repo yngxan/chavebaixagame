@@ -28,7 +28,7 @@ O arquivo `render.yaml` configura o servidor Node como serviço web gratuito no 
 - **Esc**: liberar o cursor para voltar aos painéis
 - **Painel à direita**: mudar nome, pele, cabelo, camiseta, calça, capuz e chave
 - **Chat abaixo à esquerda**: mensagens compartilhadas por todos na sala
-- **Ativar voz**: permite o microfone; apenas jogadores a até 12 unidades recebem seu áudio. Clique de novo para desligar.
+- **Ativar voz**: os dois jogadores precisam ativar o botão e permitir o microfone. O status mostra quando a conexão de voz foi estabelecida; apenas jogadores a até 12 unidades recebem seu áudio. Clique de novo para desligar.
 
 O navegador pedirá permissão do microfone. A voz fica aberta enquanto o botão estiver ativo; use-o de novo para mutar e desconectar. O áudio vai direto entre navegadores próximos.
 
@@ -38,6 +38,6 @@ Uma praça 3D blocada flutua no céu, com camadas visíveis de terra e pedra sob
 
 ## Limites desta versão
 
-Na versão local, a sala multiplayer funciona na rede local/Wi-Fi; para sócios em outros lugares, use a cópia hospedada com HTTPS. Não compartilhe a porta diretamente com a internet. O áudio P2P usa STUN público para tentar conectar jogadores; algumas redes corporativas, móveis ou com NAT restritivo podem precisar de um servidor TURN, ainda não configurado. Não há contas, persistência ou moderação; os dados da sala somem quando o servidor reinicia. A sincronização de movimento é simples e adequada para testar o conceito, não é proteção contra trapaças.
+Na versão local, a sala multiplayer funciona na rede local/Wi-Fi; para sócios em outros lugares, use a cópia hospedada com HTTPS. Não compartilhe a porta diretamente com a internet. O áudio P2P usa STUN público para tentar conectar jogadores; algumas redes corporativas, móveis ou com NAT restritivo podem precisar de um servidor TURN, ainda não configurado. O botão de voz diferencia espera pela outra pessoa, conexão e falha de rede. Não há contas, persistência ou moderação; os dados da sala somem quando o servidor reinicia. A sincronização de movimento é simples e adequada para testar o conceito, não é proteção contra trapaças.
 
 O protótipo usa Three.js 0.160.0, biblioteca 3D sob licença MIT. O aviso está em `THREE-LICENSE.txt`.
