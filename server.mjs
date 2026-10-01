@@ -25,6 +25,24 @@ const scrypt = promisify(scryptCallback);
 const clients = new Map();
 const players = new Map();
 const projectiles = new Map();
+// Movement is client-predicted for responsiveness, but accepted positions stay server-bounded.
+// Credits allow jump/knockback and short network jitter without permitting teleport speeds.
+const SECURITY_WINDOW_MS = 15000;
+const SECURITY_KICK_LIMIT = 5;
+const SECURITY_COOLDOWN_MS = 30000;
+const movementViolations = new Map();
+const securityCooldowns = new Map();
+const lastKnownPositions = new Map();
+function noteMovementViolation(client, response, reason) {
+  const now = Date.now(), recent = (movementViolations.get(client.accountId) || []).filter(at => now - at < SECURITY_WINDOW_MS);
+  recent.push(now); movementViolations.set(client.accountId, recent);
+  console.warn(`[anti-cheat] movimento rejeitado (${reason}); violações recentes: ${recent.length}`);
+  if (recent.length < SECURITY_KICK_LIMIT) { response.writeHead(204); return response.end(); }
+  securityCooldowns.set(client.accountId, now + SECURITY_COOLDOWN_MS);
+  response.writeHead(403, { 'cache-control': 'no-store', 'retry-after': String(SECURITY_COOLDOWN_MS / 1000) });
+  response.end(JSON.stringify({ error: 'Movimento inválido repetido. Aguarde 30 segundos para reconectar.' }));
+  client.response.end();
+}
 // Closest point between the attack segment and a player's vertical body capsule.
 function playerSegmentHit(from, to, position, radius) {
   const dx=to.x-from.x,dy=to.y-from.y,dz=to.z-from.z,lengthSq=dx*dx+dy*dy+dz*dz;
@@ -267,9 +285,12 @@ function authRateLimited(username) {
   return false;
 }
 function noteFailedLogin(username) { const key = normalizeUsername(username), now = Date.now(), attempts = (failedLogins.get(key) || []).filter(at => now - at < 15 * 60 * 1000); attempts.push(now); failedLogins.set(key, attempts); }
-function limitAuthRequests(request) {
+function clientAddress(request) {
   const forwarded = process.env.RENDER === 'true' ? String(request.headers['x-forwarded-for'] || '').split(',').at(-1)?.trim() : '';
-  const key = forwarded || request.socket.remoteAddress || 'local', now = Date.now(), attempts = (authRequests.get(key) || []).filter(at => now - at < 15 * 60 * 1000);
+  return forwarded || request.socket.remoteAddress || 'local';
+}
+function limitAuthRequests(request) {
+  const key = clientAddress(request), now = Date.now(), attempts = (authRequests.get(key) || []).filter(at => now - at < 15 * 60 * 1000);
   if (attempts.length >= 100) return true;
   attempts.push(now); authRequests.set(key, attempts); return false;
 }
@@ -484,6 +505,11 @@ const server = createServer(async (request, response) => {
     }
   }
   if (request.method === 'GET' && url.pathname === '/api/events') {
+    const cooldownUntil = securityCooldowns.get(authenticatedAccount.id) || 0;
+    if (cooldownUntil > Date.now()) return json(response, 403, { error: 'Entrada pausada por movimento inválido. Tente novamente em instantes.' });
+    if (cooldownUntil) securityCooldowns.delete(authenticatedAccount.id);
+    const address = clientAddress(request), connectionsFromAddress = [...clients.values()].filter(client => client.address === address).length;
+    if (connectionsFromAddress >= 8) return json(response, 429, { error: 'Este endereço já tem muitas conexões ativas na praça.' });
     if (clients.size >= MAX_PLAYERS) return json(response, 503, { error: 'Sala cheia (limite: 32 jogadores).' });
     const id = randomUUID();
     const existingPlayers = [...players.values()];
@@ -492,7 +518,7 @@ const server = createServer(async (request, response) => {
     const profile = cleanProfile(authenticatedAccount.profile, authenticatedAccount.username.toUpperCase());
     const player = {
       id, accountId: authenticatedAccount.id, name: profile.name, appearance: profile.appearance,
-      position: { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false, voiceSessionId: null, health: 100, glockEquipped: false,
+      position: lastKnownPositions.get(authenticatedAccount.id) || { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false, voiceSessionId: null, health: 100, glockEquipped: false,
     };
     response.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -501,7 +527,7 @@ const server = createServer(async (request, response) => {
       'x-accel-buffering': 'no',
     });
     response.flushHeaders();
-    clients.set(id, { response, accountId: authenticatedAccount.id, lastStateAt: 0, lastStateSequence: -1, lastChatAt: 0, lastEmoteAt: -Infinity, lastCombatAt: -Infinity, weapon: { mag: 20, reserve: 120, reloadingUntil: 0, lastShotAt: -Infinity, lastBurstAt: -Infinity, burst: 0 }, deadUntil: 0, respawnPosition: { x: Math.cos(angle) * radius, y: 0, z: 5 + Math.sin(angle) * radius }, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
+    clients.set(id, { response, accountId: authenticatedAccount.id, address, lastStateAt: 0, lastStateSequence: -1, motionAt: Date.now(), movementCredits: 4, lastChatAt: 0, lastEmoteAt: -Infinity, lastCombatAt: -Infinity, weapon: { mag: 20, reserve: 120, reloadingUntil: 0, lastShotAt: -Infinity, lastBurstAt: -Infinity, burst: 0 }, deadUntil: 0, respawnPosition: { x: Math.cos(angle) * radius, y: 0, z: 5 + Math.sin(angle) * radius }, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
     players.set(id, player);
     send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: stageSnapshot(authenticatedAccount.id), weapon: { mag: 20, reserve: 120, reloading: false }, health: 100 });
     broadcast({ type: 'join', player }, id);
@@ -527,6 +553,7 @@ const server = createServer(async (request, response) => {
         if (now < client.deadUntil) { response.writeHead(204); return response.end(); }
         client.deadUntil = 0;
         player.position = { ...client.respawnPosition };
+        lastKnownPositions.set(client.accountId, player.position);
         player.health = 100;
         player.walking = false;
         player.jumping = false;
@@ -543,17 +570,27 @@ const server = createServer(async (request, response) => {
       client.lastStateAt = now;
       const appearance = data.appearance || {};
       const position = data.position || {};
+      if (![position.x, position.y, position.z].every(value => typeof value === 'number' && Number.isFinite(value))) return noteMovementViolation(client, response, 'posição inválida');
+      const nextPosition = { x: position.x, y: position.y, z: position.z };
+      if (Math.abs(nextPosition.x) > 65 || Math.abs(nextPosition.z) > 65 || nextPosition.y < -52 || nextPosition.y > 22) return noteMovementViolation(client, response, 'limite do mapa');
+      const elapsed = Math.min(1.5, Math.max(.04, (now - client.motionAt) / 1000));
+      const dx = nextPosition.x - player.position.x, dy = nextPosition.y - player.position.y, dz = nextPosition.z - player.position.z;
+      const horizontalDistance = Math.hypot(dx, dz), verticalDistance = Math.abs(dy);
+      const movementCredits = Math.min(5, client.movementCredits + elapsed * 10.25);
+      const initialSpawnFall = player.position.y >= 12 && nextPosition.y < player.position.y && nextPosition.y >= -1;
+      const fallReset = player.position.y < -35 && nextPosition.y >= 12 && Math.hypot(nextPosition.x - client.respawnPosition.x, nextPosition.z - client.respawnPosition.z) <= 1.5;
+      if ((!fallReset && horizontalDistance > movementCredits + .35) || (!initialSpawnFall && !fallReset && verticalDistance > elapsed * 18 + 1.8)) return noteMovementViolation(client, response, 'velocidade impossível');
+      client.motionAt = now;
+      client.movementCredits = fallReset ? 4 : Math.max(0, movementCredits - horizontalDistance);
+      lastKnownPositions.set(client.accountId, nextPosition);
       player.name = cleanName(data.name);
       player.appearance = cleanAppearance(appearance);
-      player.position = {
-        x: Math.max(-500, Math.min(500, finite(position.x))),
-        y: Math.max(-100, Math.min(100, finite(position.y))),
-        z: Math.max(-500, Math.min(500, finite(position.z))),
-      };
-      player.rotation = finite(data.rotation);
-      player.speed = Math.max(0, Math.min(9, finite(data.speed)));
-      player.walking = Boolean(data.walking) && player.speed > 0.2;
-      player.jumping = Boolean(data.jumping) || player.position.y > 0.05;
+      player.position = nextPosition;
+      const rotation = finite(data.rotation, player.rotation);
+      player.rotation = Math.atan2(Math.sin(rotation), Math.cos(rotation));
+      player.speed = Math.min(11, horizontalDistance / elapsed);
+      player.walking = horizontalDistance > .025;
+      player.jumping = player.position.y > 0.05;
       player.voiceEnabled = hasSfuConfig() ? Boolean(client.voiceReady && client.voicePublishSessionId) : Boolean(data.voiceEnabled);
       player.glockEquipped = Boolean(data.glockEquipped);
       player.glockPitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.glockPitch)));
@@ -846,12 +883,12 @@ const server = createServer(async (request, response) => {
         const cameraYaw = Math.atan2(Math.sin(finite(data.cameraYaw, -facing)), Math.cos(finite(data.cameraYaw, -facing)));
         let pitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.pitch)));
         const snapshot=data.shotPosition;let shotPosition=player.position;
-        if(snapshot&&[snapshot.x,snapshot.y,snapshot.z].every(Number.isFinite)&&Math.hypot(snapshot.x-player.position.x,snapshot.y-player.position.y,snapshot.z-player.position.z)<=3.5)shotPosition=snapshot;
+        if(snapshot&&[snapshot.x,snapshot.y,snapshot.z].every(Number.isFinite)&&Math.hypot(snapshot.x-player.position.x,snapshot.y-player.position.y,snapshot.z-player.position.z)<=1.8)shotPosition=snapshot;
         const supplied = data.launchOrigin;
         let origin = null;
         if (supplied && Number.isFinite(Number(supplied.x)) && Number.isFinite(Number(supplied.y)) && Number.isFinite(Number(supplied.z))) {
           const candidate = { x: Number(supplied.x), y: Number(supplied.y), z: Number(supplied.z) };
-          if (Math.hypot(candidate.x - shotPosition.x, candidate.z - shotPosition.z) <= 2.2 && candidate.y - shotPosition.y >= .25 && candidate.y - shotPosition.y <= 3.1) origin = candidate;
+          if (Math.hypot(candidate.x - shotPosition.x, candidate.z - shotPosition.z) <= 1.5 && candidate.y - shotPosition.y >= .2 && candidate.y - shotPosition.y <= 2.8) origin = candidate;
         }
         let yaw = cameraYaw;
         if (!origin) origin = { x: shotPosition.x + Math.sin(facing) * .38, y: shotPosition.y + 1.43, z: shotPosition.z + Math.cos(facing) * .38 };
@@ -916,7 +953,7 @@ const server = createServer(async (request, response) => {
           const candidate = { x: Number(supplied.x), y: Number(supplied.y), z: Number(supplied.z) };
           const horizontalOffset = Math.hypot(candidate.x - player.position.x, candidate.z - player.position.z);
           const verticalOffset = candidate.y - player.position.y;
-          if (horizontalOffset <= 2.5 && verticalOffset >= .3 && verticalOffset <= 3.3) handOrigin = candidate;
+          if (horizontalOffset <= 1.5 && verticalOffset >= .2 && verticalOffset <= 2.8) handOrigin = candidate;
         }
         if (!handOrigin) return json(response, 400, { error: 'Não consegui localizar a mão para lançar.' });
       }
@@ -1007,6 +1044,8 @@ setInterval(() => {
   for (const [key, cached] of sessionAccounts) if (cached.validUntil <= Date.now()) sessionAccounts.delete(key);
   for (const [key, attempts] of authRequests) if (!attempts.some(at => at > cutoff)) authRequests.delete(key);
   for (const [key, attempts] of failedLogins) if (!attempts.some(at => at > cutoff)) failedLogins.delete(key);
+  for (const [key, attempts] of movementViolations) if (!attempts.some(at => at > cutoff)) movementViolations.delete(key);
+  for (const [key, until] of securityCooldowns) if (until <= Date.now()) securityCooldowns.delete(key);
 }, 25000).unref();
 
 setInterval(() => {
