@@ -45,6 +45,7 @@ const allowedFiles = new Map([
   ['/', 'index.html'],
   ['/index.html', 'index.html'],
   ['/three.min.js', 'three.min.js'],
+  ['/stage-media.js', 'stage-media.js'],
   ['/THREE-LICENSE.txt', 'THREE-LICENSE.txt'],
   ['/LEIA-ME.md', 'LEIA-ME.md'],
 ]);
@@ -171,7 +172,11 @@ async function initializeAccountStore() {
   console.log('Armazenamento local de contas ativo (senhas protegidas por hash).');
 }
 await initializeAccountStore();
-function publicAccount(account) { return { id: account.id, username: account.username, profile: account.profile }; }
+// Resolve the existing owner's account, never a client-supplied character name.
+const administratorAccountId = (await findAccountByUsername('yngxan'))?.id || null;
+let stageMedia = { videoId: null, playing: false, position: 0, updatedAt: Date.now() };
+function isAdministrator(account) { return Boolean(administratorAccountId && account?.id === administratorAccountId); }
+function publicAccount(account) { return { id: account.id, username: account.username, profile: account.profile, role: isAdministrator(account) ? 'admin' : 'player' }; }
 async function findAccountByUsername(username) {
   if (database) { const result = await database.query('SELECT id, username, password_salt AS "passwordSalt", password_hash AS "passwordHash", profile FROM lowkey_accounts WHERE username = $1', [username]); return result.rows[0] || null; }
   return localAccounts.accounts.find(account => account.username === username) || null;
@@ -400,6 +405,23 @@ const server = createServer(async (request, response) => {
     catch { return json(response, 503, { error: 'O serviço de contas está indisponível.' }); }
     if (!authenticatedAccount) return json(response, 401, { error: 'Entre na sua conta para jogar.' });
   }
+  if (request.method === 'GET' && url.pathname === '/api/stage') return json(response, 200, { ...stageMedia, serverTime: Date.now() });
+  if (request.method === 'POST' && url.pathname === '/api/stage') {
+    if (!isAdministrator(authenticatedAccount)) return json(response, 403, { error: 'Só o administrador controla o palco.' });
+    try {
+      const data = await readJson(request, 2048), now = Date.now();
+      const position = stageMedia.position + (stageMedia.playing ? (now - stageMedia.updatedAt) / 1000 : 0);
+      if (data.action === 'load') {
+        if (!/^[A-Za-z0-9_-]{11}$/.test(data.videoId || '')) return json(response, 400, { error: 'Vídeo do YouTube inválido.' });
+        stageMedia = { videoId: data.videoId, playing: true, position: 0, updatedAt: now };
+      } else if (['play', 'pause', 'stop'].includes(data.action)) {
+        stageMedia = { ...stageMedia, playing: data.action === 'play', position: data.action === 'stop' ? 0 : position, updatedAt: now };
+      } else return json(response, 400, { error: 'Ação inválida.' });
+      const snapshot = { ...stageMedia, serverTime: now };
+      broadcast({ type: 'stage-media', stageMedia: snapshot });
+      return json(response, 200, snapshot);
+    } catch (error) { return json(response, error.statusCode || 400, { error: 'Não consegui atualizar o palco.' }); }
+  }
   if (request.method === 'GET' && url.pathname === '/api/voice/config') {
     const localHost = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname);
     const mode = hasSfuConfig() ? 'sfu' : localHost ? 'direct' : 'unconfigured';
@@ -435,7 +457,7 @@ const server = createServer(async (request, response) => {
     response.flushHeaders();
     clients.set(id, { response, accountId: authenticatedAccount.id, lastStateAt: 0, lastChatAt: 0, lastEmoteAt: -Infinity, lastCombatAt: -Infinity, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
     players.set(id, player);
-    send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers });
+    send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: { ...stageMedia, serverTime: Date.now() } });
     broadcast({ type: 'join', player }, id);
     response.on('close', () => {
       const current = clients.get(id);

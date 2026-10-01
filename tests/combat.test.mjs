@@ -12,6 +12,15 @@ function loadFunction(source,name,dependencies={}){
 }
 const poseAt=loadFunction(html,'combatPoseAt');
 const hit=loadFunction(server,'playerSegmentHit');
+
+test('administrator permission is bound to the existing account ID, not avatar names',()=>{
+  const isAdmin=loadFunction(server,'isAdministrator',{administratorAccountId:'owner-id'});
+  assert.equal(isAdmin({id:'owner-id',username:'yngxan'}),true);
+  assert.equal(isAdmin({id:'other-id',username:'yngxan',role:'admin'}),false);
+  assert.equal(isAdmin(null),false);
+  const disabled=loadFunction(server,'isAdministrator',{administratorAccountId:null});
+  assert.equal(disabled({id:null,username:'yngxan'}),false);
+});
 test('camera can look vertically up and down without flipping',()=>{
   const clamp=loadFunction(html,'clampCameraPitch');
   assert.ok(clamp(-10)<-1.55);assert.ok(clamp(10)>1.55);
