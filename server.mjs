@@ -794,10 +794,23 @@ const server = createServer(async (request, response) => {
       client.lastCombatAt = now;
       const combatToken=randomUUID();client.combatToken=combatToken;
       const facing = Math.atan2(Math.sin(finite(data.facing, player.rotation)), Math.cos(finite(data.facing, player.rotation)));
-      const yaw = -facing, cameraPitch = action === 'snowball' ? Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.pitch))) : 0;
+      const firstPerson = action === 'snowball' && data.firstPerson === true;
+      const cameraYaw = firstPerson ? Math.atan2(Math.sin(finite(data.cameraYaw, -facing)), Math.cos(finite(data.cameraYaw, -facing))) : -facing;
+      const yaw = firstPerson ? cameraYaw : -facing, cameraPitch = action === 'snowball' ? Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.pitch))) : 0;
       const aim = { x: -Math.sin(yaw) * Math.cos(cameraPitch), y: -Math.sin(cameraPitch), z: Math.cos(yaw) * Math.cos(cameraPitch) };
+      let handOrigin = null;
+      if (firstPerson) {
+        const supplied = data.launchOrigin;
+        if (supplied && Number.isFinite(Number(supplied.x)) && Number.isFinite(Number(supplied.y)) && Number.isFinite(Number(supplied.z))) {
+          const candidate = { x: Number(supplied.x), y: Number(supplied.y), z: Number(supplied.z) };
+          const horizontalOffset = Math.hypot(candidate.x - player.position.x, candidate.z - player.position.z);
+          const verticalOffset = candidate.y - player.position.y;
+          if (horizontalOffset <= 2.5 && verticalOffset >= .3 && verticalOffset <= 3.3) handOrigin = candidate;
+        }
+        if (!handOrigin) return json(response, 400, { error: 'Não consegui localizar a mão para lançar.' });
+      }
       player.rotation=facing;
-      broadcast({type:'combat-start',id,kind:action,facing,pitch:action==='snowball'?cameraPitch:0,time:now});
+      broadcast({type:'combat-start',id,kind:action,facing,pitch:action==='snowball'?cameraPitch:0,firstPerson,time:now});
       // Resolve the strike/release at the matching animation keyframe, once only.
       setTimeout(() => {
       if(clients.get(id)!==client||players.get(id)!==player||client.combatToken!==combatToken)return;
@@ -815,9 +828,10 @@ const server = createServer(async (request, response) => {
         const dx = target ? target.position.x - player.position.x : aim.x, dz = target ? target.position.z - player.position.z : aim.z, length = Math.hypot(dx, dz) || 1;
         broadcast({ type: 'combat-punch', id, targetId: target?.id || null, impulse: target ? { x: dx / length * 2.4, z: dz / length * 2.4 } : null, time: releasedAt });
       } else {
-        const position={x:player.position.x+aim.x*.6+Math.cos(yaw)*.42,y:player.position.y+1.42+aim.y*.6,z:player.position.z+aim.z*.6+Math.sin(yaw)*.42};
-        const direction={x:player.position.x+aim.x*12-position.x,y:player.position.y+1.42+aim.y*12-position.y,z:player.position.z+aim.z*12-position.z},length=Math.hypot(direction.x,direction.y,direction.z);
-        const velocity = snowballVelocity(facing, cameraPitch);
+        const position = firstPerson
+          ? { x: handOrigin.x + aim.x * .12, y: handOrigin.y + aim.y * .12, z: handOrigin.z + aim.z * .12 }
+          : { x: player.position.x - Math.cos(yaw) * .34 + aim.x * .55, y: player.position.y + .94 + aim.y * .22, z: player.position.z - Math.sin(yaw) * .34 + aim.z * .55 };
+        const velocity = snowballVelocity(firstPerson ? -cameraYaw : facing, cameraPitch);
         const projectile = { id: randomUUID(), ownerId: id, kind: action, position, velocity, lastAt: releasedAt, createdAt: releasedAt };
         projectiles.set(projectile.id, projectile);
         broadcast({ type: 'combat-throw', projectile: { id: projectile.id, ownerId: id, kind: action, position: projectile.position, velocity: projectile.velocity, time: releasedAt } });
