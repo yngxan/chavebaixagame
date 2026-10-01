@@ -62,6 +62,7 @@ test('only existing owner account controls shared video; join snapshot includes 
   const repeated=await request('owner','/api/stage',{action:'next'}).then(r=>r.json());assert.equal(repeated.videoId,queued.videoId);assert.notEqual(repeated.playbackId,queued.playbackId);
   await request('owner','/api/stage',{action:'enqueue',videoId:'ddddddddddd'});
   child.kill();await once(child,'exit');child=launch();let restarted=false;child.stdout.on('data',data=>{if(String(data).includes('multiplayer pronta'))restarted=true;});for(let i=0;i<400&&!restarted;i++)await delay(10);assert.ok(restarted);
-const restored=await request('owner','/api/stage').then(r=>r.json());assert.equal(restored.videoId,'ccccccccccc');assert.equal(restored.queue[0].videoId,'ddddddddddd');assert.equal(restored.playing,true);
+  const restored=await request('owner','/api/stage').then(r=>r.json());assert.equal(restored.videoId,'ccccccccccc');assert.equal(restored.queue[0].videoId,'ddddddddddd');assert.equal(restored.playing,true);assert.equal(restored.updatedAt,repeated.updatedAt);
+  const lateJoin=await request('guest','/api/stage').then(r=>r.json());assert.equal(lateJoin.playbackId,restored.playbackId);assert.equal(lateJoin.updatedAt,restored.updatedAt);assert.ok(lateJoin.serverTime>lateJoin.updatedAt);
  }finally{child.kill();await once(child,'exit').catch(()=>{});assert.equal(dirname(resolve(fixture)),resolve(tmpdir()));assert.ok(basename(fixture).startsWith('lowkey-stage-test-'));await rm(fixture,{recursive:true,force:true});}
 });
