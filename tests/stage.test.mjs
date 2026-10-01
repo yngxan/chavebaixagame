@@ -10,6 +10,15 @@ import {once} from 'node:events';
 import {setTimeout as delay} from 'node:timers/promises';
 import vm from 'node:vm';
 
+test('video is composed behind the depth-tested world, not on top of avatars',async()=>{
+ const html=await readFile(new URL('../index.html',import.meta.url),'utf8'),media=await readFile(new URL('../stage-media.js',import.meta.url),'utf8');
+ assert.match(html,/WebGLRenderer\(\{alpha:true/);
+ assert.match(media,/opacity:0,transparent:false,blending:THREE.NoBlending,depthWrite:true/);
+ assert.match(media,/#game\{z-index:1\}/);
+ assert.match(media,/aperture.visible=!surface.hidden/);
+ assert.doesNotMatch(media,/occluded=ray/);
+});
+
 test('screen projection preserves all four perspective corners and validates stored volumes',async()=>{
  const window={},context={window,localStorage:{getItem:()=>'{"master":0.5,"voice":2,"music":-1}'}};
  vm.runInNewContext(await readFile(new URL('../stage-media.js',import.meta.url),'utf8'),context);
