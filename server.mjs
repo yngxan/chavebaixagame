@@ -499,7 +499,7 @@ const server = createServer(async (request, response) => {
       'x-accel-buffering': 'no',
     });
     response.flushHeaders();
-    clients.set(id, { response, accountId: authenticatedAccount.id, lastStateAt: 0, lastChatAt: 0, lastEmoteAt: -Infinity, lastCombatAt: -Infinity, weapon: { mag: 20, reserve: 120, reloadingUntil: 0, lastShotAt: -Infinity, lastBurstAt: -Infinity, burst: 0 }, deadUntil: 0, respawnPosition: { x: Math.cos(angle) * radius, y: 0, z: 5 + Math.sin(angle) * radius }, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
+    clients.set(id, { response, accountId: authenticatedAccount.id, lastStateAt: 0, lastStateSequence: -1, lastChatAt: 0, lastEmoteAt: -Infinity, lastCombatAt: -Infinity, weapon: { mag: 20, reserve: 120, reloadingUntil: 0, lastShotAt: -Infinity, lastBurstAt: -Infinity, burst: 0 }, deadUntil: 0, respawnPosition: { x: Math.cos(angle) * radius, y: 0, z: 5 + Math.sin(angle) * radius }, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
     players.set(id, player);
     send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: stageSnapshot(authenticatedAccount.id), weapon: { mag: 20, reserve: 120, reloading: false }, health: 100 });
     broadcast({ type: 'join', player }, id);
@@ -534,7 +534,10 @@ const server = createServer(async (request, response) => {
         response.writeHead(204);
         return response.end();
       }
+      const sequence = data.sequence;
+      if (Number.isSafeInteger(sequence) && sequence >= 0 && sequence <= client.lastStateSequence) { response.writeHead(204); return response.end(); }
       if (now - client.lastStateAt < 40) { response.writeHead(204); return response.end(); }
+      if (Number.isSafeInteger(sequence) && sequence >= 0) client.lastStateSequence = sequence;
       client.lastStateAt = now;
       const appearance = data.appearance || {};
       const position = data.position || {};
