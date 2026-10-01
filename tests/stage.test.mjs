@@ -15,6 +15,7 @@ test('video is composed behind the depth-tested world, not on top of avatars',as
  assert.match(html,/WebGLRenderer\(\{alpha:true/);
  assert.match(media,/opacity:0,transparent:false,blending:THREE.NoBlending,depthWrite:true/);
  assert.match(media,/#game\{z-index:1\}/);
+ assert.match(html,/<div class="hud" style="z-index:3">/);
  assert.match(media,/aperture.visible=!surface.hidden/);
  assert.doesNotMatch(media,/occluded=ray/);
 });
@@ -33,7 +34,8 @@ test('only existing owner account controls shared video; join snapshot includes 
  await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));await mkdir(join(fixture,'data'));
  const hash=token=>createHash('sha256').update(token).digest('hex');
  await writeFile(join(fixture,'data','accounts.json'),JSON.stringify({accounts:[{id:'owner',username:'yngxan',profile:{}},{id:'guest',username:'guest',profile:{name:'YNGXAN'}}],sessions:['owner','guest'].map(id=>({tokenHash:hash(id+'-token'),accountId:id,expiresAt:new Date(Date.now()+60000).toISOString()}))}));
- const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
+ const launch=()=>spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
+ let child=launch();
  const base=`http://127.0.0.1:${port}`;
  const request=(id,path,body)=>fetch(base+path,{headers:{cookie:`lowkey_session=${id}-token`,'content-type':'application/json'},...(body?{method:'POST',body:JSON.stringify(body)}:{})});
  try{let ready=false;child.stdout.on('data',data=>{if(String(data).includes('multiplayer pronta'))ready=true;});for(let i=0;i<400&&!ready;i++)await delay(10);assert.ok(ready);
@@ -45,5 +47,21 @@ test('only existing owner account controls shared video; join snapshot includes 
   const state=await request('guest','/api/stage').then(r=>r.json());assert.equal(state.position,paused.position);assert.ok(state.serverTime);
   const abort=new AbortController(),stream=await fetch(base+'/api/events',{headers:{cookie:'lowkey_session=guest-token'},signal:abort.signal}),reader=stream.body.getReader();const first=new TextDecoder().decode((await reader.read()).value);assert.ok(first.includes('stageMedia'));assert.ok(first.includes('M7lc1UVf-VE'));abort.abort();
   const stopped=await request('owner','/api/stage',{action:'stop'}).then(r=>r.json());assert.equal(stopped.position,0);assert.equal(stopped.playing,false);
+  const added=await Promise.all(['aaaaaaaaaaa','bbbbbbbbbbb','ccccccccccc'].map(videoId=>request('owner','/api/stage',{action:'enqueue',videoId})));assert.ok(added.every(r=>r.status===200));
+  let queued=await request('owner','/api/stage').then(r=>r.json());assert.equal(queued.queue.length,3);
+  const privateState=await request('guest','/api/stage').then(r=>r.json());assert.equal(privateState.queueCount,3);assert.equal(privateState.queue,undefined);
+  assert.equal((await request('guest','/api/stage',{action:'next'})).status,403);
+  const last=queued.queue[2];queued=await request('owner','/api/stage',{action:'move',itemId:last.id,direction:-1}).then(r=>r.json());assert.equal(queued.queue[1].id,last.id);
+  queued=await request('owner','/api/stage',{action:'remove',itemId:queued.queue[2].id}).then(r=>r.json());assert.equal(queued.queue.length,2);
+  const originalPlayback=queued.playbackId;
+  queued=await request('owner','/api/stage',{action:'next'}).then(r=>r.json());assert.equal(queued.videoId,'aaaaaaaaaaa');assert.equal(queued.playing,true);
+  assert.equal((await request('owner','/api/stage',{action:'duration',playbackId:originalPlayback,duration:1})).status,409);
+  assert.equal((await request('owner','/api/stage',{action:'duration',playbackId:queued.playbackId,duration:1})).status,200);
+  await delay(2300);queued=await request('owner','/api/stage').then(r=>r.json());assert.equal(queued.videoId,'ccccccccccc');assert.equal(queued.queue.length,0);assert.equal(queued.duration,null);
+  await request('owner','/api/stage',{action:'enqueue',videoId:'ccccccccccc'});
+  const repeated=await request('owner','/api/stage',{action:'next'}).then(r=>r.json());assert.equal(repeated.videoId,queued.videoId);assert.notEqual(repeated.playbackId,queued.playbackId);
+  await request('owner','/api/stage',{action:'enqueue',videoId:'ddddddddddd'});
+  child.kill();await once(child,'exit');child=launch();let restarted=false;child.stdout.on('data',data=>{if(String(data).includes('multiplayer pronta'))restarted=true;});for(let i=0;i<400&&!restarted;i++)await delay(10);assert.ok(restarted);
+  const restored=await request('owner','/api/stage').then(r=>r.json());assert.equal(restored.videoId,'ccccccccccc');assert.equal(restored.queue[0].videoId,'ddddddddddd');assert.equal(restored.playing,false);
  }finally{child.kill();await once(child,'exit').catch(()=>{});assert.equal(dirname(resolve(fixture)),resolve(tmpdir()));assert.ok(basename(fixture).startsWith('lowkey-stage-test-'));await rm(fixture,{recursive:true,force:true});}
 });

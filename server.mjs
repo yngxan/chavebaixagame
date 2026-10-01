@@ -174,7 +174,33 @@ async function initializeAccountStore() {
 await initializeAccountStore();
 // Resolve the existing owner's account, never a client-supplied character name.
 const administratorAccountId = (await findAccountByUsername('yngxan'))?.id || null;
-let stageMedia = { videoId: null, playing: false, position: 0, updatedAt: Date.now() };
+let stageMedia = { videoId: null, playing: false, position: 0, updatedAt: Date.now(), playbackId: randomUUID(), duration: null, queue: [] };
+const STAGE_FILE = join(ROOT, 'data', 'stage.json');
+let stageMutationQueue = Promise.resolve();
+if (database) {
+  await database.query('CREATE TABLE IF NOT EXISTS lowkey_stage (id INTEGER PRIMARY KEY CHECK (id = 1), state JSONB NOT NULL)');
+  const saved = await database.query('SELECT state FROM lowkey_stage WHERE id = 1');
+  if (saved.rows[0]) stageMedia = { ...stageMedia, ...saved.rows[0].state };
+} else {
+  try { stageMedia = { ...stageMedia, ...JSON.parse(await readFile(STAGE_FILE, 'utf8')) }; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+// Restart paused at the saved point, without consuming the queue while the server was offline.
+stageMedia.playing = false;
+stageMedia.updatedAt = Date.now();
+function stageSnapshot(accountId) { const { queue, ...state } = stageMedia; return { ...state, queueCount: queue.length, ...(accountId === administratorAccountId ? { queue } : {}), serverTime: Date.now() }; }
+function broadcastStage() { for (const client of clients.values()) send(client.response, { type: 'stage-media', stageMedia: stageSnapshot(client.accountId) }); }
+async function persistStage(state) {
+  if (database) await database.query('INSERT INTO lowkey_stage (id, state) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state', [state]);
+  else { await mkdir(dirname(STAGE_FILE), { recursive: true }); await writeFile(`${STAGE_FILE}.tmp`, JSON.stringify(state), { encoding: 'utf8', mode: 0o600 }); await rename(`${STAGE_FILE}.tmp`, STAGE_FILE); }
+}
+function mutateStage(operation) { const task = stageMutationQueue.catch(() => {}).then(operation); stageMutationQueue = task; return task; }
+function nextStageVideo(state, now) { const queue = [...state.queue], item = queue.shift(); return { ...state, videoId: item?.videoId || null, playing: Boolean(item), position: 0, updatedAt: now, duration: null, playbackId: randomUUID(), queue }; }
+setInterval(() => {
+  void mutateStage(async () => {
+    if (!stageMedia.playing || !stageMedia.duration || stageMedia.position + (Date.now() - stageMedia.updatedAt) / 1000 < stageMedia.duration) return;
+    const next = nextStageVideo(stageMedia, Date.now()); await persistStage(next); stageMedia = next; broadcastStage();
+  }).catch(() => console.error('Falha ao avançar a fila do palco.'));
+}, 1000).unref();
 function isAdministrator(account) { return Boolean(administratorAccountId && account?.id === administratorAccountId); }
 function publicAccount(account) { return { id: account.id, username: account.username, profile: account.profile, role: isAdministrator(account) ? 'admin' : 'player' }; }
 async function findAccountByUsername(username) {
@@ -405,22 +431,35 @@ const server = createServer(async (request, response) => {
     catch { return json(response, 503, { error: 'O serviço de contas está indisponível.' }); }
     if (!authenticatedAccount) return json(response, 401, { error: 'Entre na sua conta para jogar.' });
   }
-  if (request.method === 'GET' && url.pathname === '/api/stage') return json(response, 200, { ...stageMedia, serverTime: Date.now() });
+  if (request.method === 'GET' && url.pathname === '/api/stage') return json(response, 200, stageSnapshot(authenticatedAccount.id));
   if (request.method === 'POST' && url.pathname === '/api/stage') {
     if (!isAdministrator(authenticatedAccount)) return json(response, 403, { error: 'Só o administrador controla o palco.' });
     try {
-      const data = await readJson(request, 2048), now = Date.now();
-      const position = stageMedia.position + (stageMedia.playing ? (now - stageMedia.updatedAt) / 1000 : 0);
-      if (data.action === 'load') {
-        if (!/^[A-Za-z0-9_-]{11}$/.test(data.videoId || '')) return json(response, 400, { error: 'Vídeo do YouTube inválido.' });
-        stageMedia = { videoId: data.videoId, playing: true, position: 0, updatedAt: now };
-      } else if (['play', 'pause', 'stop'].includes(data.action)) {
-        stageMedia = { ...stageMedia, playing: data.action === 'play', position: data.action === 'stop' ? 0 : position, updatedAt: now };
-      } else return json(response, 400, { error: 'Ação inválida.' });
-      const snapshot = { ...stageMedia, serverTime: now };
-      broadcast({ type: 'stage-media', stageMedia: snapshot });
-      return json(response, 200, snapshot);
-    } catch (error) { return json(response, error.statusCode || 400, { error: 'Não consegui atualizar o palco.' }); }
+      const data = await readJson(request, 2048);
+      await mutateStage(async () => {
+        const now = Date.now(), position = stageMedia.position + (stageMedia.playing ? (now - stageMedia.updatedAt) / 1000 : 0);
+        let next = { ...stageMedia, queue: [...stageMedia.queue] };
+        const invalid = message => { throw Object.assign(new Error(message), { statusCode: 400 }); };
+        if (['load', 'enqueue'].includes(data.action)) {
+          if (!/^[A-Za-z0-9_-]{11}$/.test(data.videoId || '')) invalid('Vídeo do YouTube inválido.');
+          if (data.action === 'load') next = { ...next, videoId: data.videoId, playing: true, position: 0, updatedAt: now, duration: null, playbackId: randomUUID() };
+          else { if (next.queue.length >= 100) invalid('A fila aceita até 100 vídeos.'); next.queue.push({ id: randomUUID(), videoId: data.videoId }); if (!next.videoId) next = nextStageVideo(next, now); }
+        } else if (['play', 'pause', 'stop'].includes(data.action)) {
+          next = { ...next, playing: data.action === 'play' && Boolean(next.videoId), position: data.action === 'stop' ? 0 : position, updatedAt: now };
+        } else if (data.action === 'next') next = nextStageVideo(next, now);
+        else if (['remove', 'move'].includes(data.action)) {
+          const index = next.queue.findIndex(item => item.id === data.itemId); if (index < 0) invalid('Este vídeo não está mais na fila.');
+          if (data.action === 'remove') next.queue.splice(index, 1);
+          else { if (![-1, 1].includes(data.direction)) invalid('Direção inválida.'); const target = index + data.direction; if (target < 0 || target >= next.queue.length) invalid('Limite da fila.'); [next.queue[index], next.queue[target]] = [next.queue[target], next.queue[index]]; }
+        } else if (data.action === 'duration') {
+          if (data.playbackId !== next.playbackId) throw Object.assign(new Error('O vídeo já mudou.'), { statusCode: 409 });
+          if (!Number.isFinite(data.duration) || data.duration < 1 || data.duration > 86400) invalid('Duração inválida.');
+          next.duration = data.duration;
+        } else invalid('Ação inválida.');
+        await persistStage(next); stageMedia = next; broadcastStage();
+      });
+      return json(response, 200, stageSnapshot(authenticatedAccount.id));
+    } catch (error) { return json(response, error.statusCode || 503, { error: error.statusCode ? error.message : 'Não consegui salvar a fila do palco.' }); }
   }
   if (request.method === 'GET' && url.pathname === '/api/voice/config') {
     const localHost = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname);
@@ -457,7 +496,7 @@ const server = createServer(async (request, response) => {
     response.flushHeaders();
     clients.set(id, { response, accountId: authenticatedAccount.id, lastStateAt: 0, lastChatAt: 0, lastEmoteAt: -Infinity, lastCombatAt: -Infinity, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
     players.set(id, player);
-    send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: { ...stageMedia, serverTime: Date.now() } });
+    send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: stageSnapshot(authenticatedAccount.id) });
     broadcast({ type: 'join', player }, id);
     response.on('close', () => {
       const current = clients.get(id);
