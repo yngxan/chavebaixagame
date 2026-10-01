@@ -550,6 +550,8 @@ const server = createServer(async (request, response) => {
       player.jumping = Boolean(data.jumping) || player.position.y > 0.05;
       player.voiceEnabled = hasSfuConfig() ? Boolean(client.voiceReady && client.voicePublishSessionId) : Boolean(data.voiceEnabled);
       player.glockEquipped = Boolean(data.glockEquipped);
+      player.glockPitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.glockPitch)));
+      player.glockAiming = player.glockEquipped && data.glockAiming === true;
       broadcast({ type: 'state', player }, player.id);
       response.writeHead(204);
       return response.end();
@@ -834,22 +836,29 @@ const server = createServer(async (request, response) => {
         if (now - weapon.lastShotAt < 138) return json(response, 429, { error: 'A Glock é semiautomática · toque de novo.' });
         const facing = Math.atan2(Math.sin(finite(data.facing, player.rotation)), Math.cos(finite(data.facing, player.rotation)));
         const firstPerson = data.firstPerson === true;
-        const cameraYaw = firstPerson ? Math.atan2(Math.sin(finite(data.cameraYaw, -facing)), Math.cos(finite(data.cameraYaw, -facing))) : -facing;
-        const pitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.pitch)));
+        const cameraYaw = Math.atan2(Math.sin(finite(data.cameraYaw, -facing)), Math.cos(finite(data.cameraYaw, -facing)));
+        let pitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.pitch)));
+        const snapshot=data.shotPosition;let shotPosition=player.position;
+        if(snapshot&&[snapshot.x,snapshot.y,snapshot.z].every(Number.isFinite)&&Math.hypot(snapshot.x-player.position.x,snapshot.y-player.position.y,snapshot.z-player.position.z)<=3.5)shotPosition=snapshot;
         const supplied = data.launchOrigin;
         let origin = null;
         if (supplied && Number.isFinite(Number(supplied.x)) && Number.isFinite(Number(supplied.y)) && Number.isFinite(Number(supplied.z))) {
           const candidate = { x: Number(supplied.x), y: Number(supplied.y), z: Number(supplied.z) };
-          if (Math.hypot(candidate.x - player.position.x, candidate.z - player.position.z) <= 2.2 && candidate.y - player.position.y >= .25 && candidate.y - player.position.y <= 3.1) origin = candidate;
+          if (Math.hypot(candidate.x - shotPosition.x, candidate.z - shotPosition.z) <= 2.2 && candidate.y - shotPosition.y >= .25 && candidate.y - shotPosition.y <= 3.1) origin = candidate;
         }
-        const yaw = firstPerson ? cameraYaw : -facing;
-        if (!origin) origin = { x: player.position.x + Math.sin(facing) * .38, y: player.position.y + 1.06, z: player.position.z + Math.cos(facing) * .38 };
+        let yaw = cameraYaw;
+        if (!origin) origin = { x: shotPosition.x + Math.sin(facing) * .38, y: shotPosition.y + 1.43, z: shotPosition.z + Math.cos(facing) * .38 };
+        const aimPoint=data.aimPoint;
+        if(aimPoint&&[aimPoint.x,aimPoint.y,aimPoint.z].every(Number.isFinite)){
+          const dx=aimPoint.x-origin.x,dy=aimPoint.y-origin.y,dz=aimPoint.z-origin.z,length=Math.hypot(dx,dy,dz);
+          if(length>.1&&length<=90){yaw=Math.atan2(-dx,dz);pitch=Math.atan2(-dy,Math.hypot(dx,dz));}
+        }
         const burst = now - weapon.lastBurstAt < 410 ? Math.min(weapon.burst + 1, 8) : 1;
         weapon.burst = burst;
         weapon.lastBurstAt = now;
         weapon.lastShotAt = now;
         weapon.mag -= 1;
-        const spread = .0015 + burst * .0017 + (player.speed > 5.2 ? .009 : player.speed > 2 ? .0035 : 0) + (player.position.y > .16 ? .013 : 0);
+        const spread = (.0015 + burst * .0017 + (player.speed > 5.2 ? .009 : player.speed > 2 ? .0035 : 0) + (player.position.y > .16 ? .013 : 0)) * (data.aiming === true ? .72 : 1);
         const angle = Math.random() * Math.PI * 2, radius = Math.sqrt(Math.random()) * spread;
         const shotYaw = yaw + Math.cos(angle) * radius;
         const shotPitch = pitch + Math.sin(angle) * radius;
@@ -870,7 +879,8 @@ const server = createServer(async (request, response) => {
         }
         player.glockEquipped = true;
         send(client.response, { type: 'weapon-state', mag: weapon.mag, reserve: weapon.reserve, reloading: false });
-        broadcast({ type: 'glock-shot', shooterId: id, facing, firstPerson, start: origin, end: hitPoint, hit: Boolean(target), targetId: target?.id || null, headshot, time: now });
+        player.rotation=facing;player.glockPitch=finite(data.pitch);player.glockAiming=data.aiming===true;
+        broadcast({ type: 'glock-shot', shooterId: id, facing, pitch:player.glockPitch, firstPerson, start: origin, end: hitPoint, hit: Boolean(target), targetId: target?.id || null, headshot, time: now });
         if (target) {
           const impulseLength = Math.hypot(direction.x, direction.z) || 1;
           const deadUntil = target.health <= 0 ? now + 2200 : 0;
