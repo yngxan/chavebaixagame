@@ -672,7 +672,7 @@
     addRoundVolume(normal,[-.065,.012,-.075],[.042,.06,.045],skin);
     const ball=addRoundVolume(normal,[0,.16,-.055],[.13,.13,.13],snow);ball.visible=false;group.userData.ball=ball;
     const part=(size,position,material)=>{const mesh=new THREE.Mesh(new THREE.BoxGeometry(...size),material);mesh.position.set(...position);rig.add(mesh);return mesh;};
-    const sleeveBetween=(a,b)=>{const from=new THREE.Vector3(...a),to=new THREE.Vector3(...b),direction=to.clone().sub(from),mesh=new THREE.Mesh(new THREE.CylinderGeometry(.055,.072,direction.length(),10),sleeve);mesh.position.copy(from.add(to).multiplyScalar(.5));mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());rig.add(mesh);};
+    const sleeveBetween=(a,b)=>{const from=new THREE.Vector3(...a),to=new THREE.Vector3(...b),direction=to.clone().sub(from),mesh=new THREE.Mesh(new THREE.CylinderGeometry(.078,.105,direction.length(),14),sleeve);mesh.position.copy(from.add(to).multiplyScalar(.5));mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());rig.add(mesh);};
     sleeveBetween([.10,-.39,.14],[.02,-.09,-.065]);
     sleeveBetween([-.23,-.38,.12],[-.075,-.08,-.10]);
     part([.082,.105,.083],[.01,-.042,-.10],skin);
