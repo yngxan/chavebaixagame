@@ -668,8 +668,9 @@
     const group=new THREE.Group(),normal=new THREE.Group(),rig=new THREE.Group(),skin=smoothMaterial(colors.skin),sleeve=smoothMaterial(colors.shirt),snow=combatSnowMaterial.clone();
     group.add(normal,rig);group.userData.normalHand=normal;group.userData.weaponRig=rig;
     addRoundVolume(normal,[0,-.24,.025],[.105,.28,.105],sleeve);
-    addRoundVolume(normal,[0,.045,-.02],[.10,.115,.10],skin);
-    addRoundVolume(normal,[-.065,.012,-.075],[.042,.06,.045],skin);
+    const fist=new THREE.Mesh(new THREE.BoxGeometry(.135,.15,.105),skin);fist.position.set(0,.028,-.025);normal.add(fist);
+    const thumb=new THREE.Mesh(new THREE.BoxGeometry(.043,.073,.054),skin);thumb.position.set(-.068,.004,-.034);thumb.rotation.z=-.24;normal.add(thumb);
+    for(let finger=0;finger<4;finger++){const knuckle=new THREE.Mesh(new THREE.BoxGeometry(.031,.025,.052),skin);knuckle.position.set((finger-1.5)*.032,.099,-.045);normal.add(knuckle);}
     const ball=addRoundVolume(normal,[0,.16,-.055],[.13,.13,.13],snow);ball.visible=false;group.userData.ball=ball;
     const part=(size,position,material)=>{const mesh=new THREE.Mesh(new THREE.BoxGeometry(...size),material);mesh.position.set(...position);rig.add(mesh);return mesh;};
     const sleeveBetween=(a,b)=>{const from=new THREE.Vector3(...a),to=new THREE.Vector3(...b),direction=to.clone().sub(from),mesh=new THREE.Mesh(new THREE.CylinderGeometry(.078,.105,direction.length(),14),sleeve);mesh.position.copy(from.add(to).multiplyScalar(.5));mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());rig.add(mesh);};
