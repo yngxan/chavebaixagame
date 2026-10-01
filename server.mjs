@@ -81,6 +81,11 @@ function finite(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
+function snowballVelocity(facing, cameraPitch, speed = 28) {
+  const pitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(cameraPitch)));
+  const horizontal = Math.cos(pitch);
+  return { x: Math.sin(facing) * horizontal * speed, y: -Math.sin(pitch) * speed, z: Math.cos(facing) * horizontal * speed };
+}
 function readJson(request, limit = 8192) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -784,15 +789,15 @@ const server = createServer(async (request, response) => {
       const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id), action = String(data.action || '');
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (!['punch', 'snowball'].includes(action)) return json(response, 400, { error: 'Ação inválida.' });
-      const now = Date.now(), cooldown = action === 'punch' ? 560 : 850;
+      const now = Date.now(), cooldown = action === 'punch' ? 560 : 420;
       if (now - client.lastCombatAt < cooldown) return json(response, 429, { error: 'Espera um instante antes de atacar de novo.' });
       client.lastCombatAt = now;
       const combatToken=randomUUID();client.combatToken=combatToken;
       const facing = Math.atan2(Math.sin(finite(data.facing, player.rotation)), Math.cos(finite(data.facing, player.rotation)));
-      const yaw = -facing, pitch = 0;
-      const aim = { x: -Math.sin(yaw) * Math.cos(pitch), y: -Math.sin(pitch), z: Math.cos(yaw) * Math.cos(pitch) };
+      const yaw = -facing, cameraPitch = action === 'snowball' ? Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.pitch))) : 0;
+      const aim = { x: -Math.sin(yaw) * Math.cos(cameraPitch), y: -Math.sin(cameraPitch), z: Math.cos(yaw) * Math.cos(cameraPitch) };
       player.rotation=facing;
-      broadcast({type:'combat-start',id,kind:action,facing,time:now});
+      broadcast({type:'combat-start',id,kind:action,facing,pitch:action==='snowball'?cameraPitch:0,time:now});
       // Resolve the strike/release at the matching animation keyframe, once only.
       setTimeout(() => {
       if(clients.get(id)!==client||players.get(id)!==player||client.combatToken!==combatToken)return;
@@ -812,11 +817,12 @@ const server = createServer(async (request, response) => {
       } else {
         const position={x:player.position.x+aim.x*.6+Math.cos(yaw)*.42,y:player.position.y+1.42+aim.y*.6,z:player.position.z+aim.z*.6+Math.sin(yaw)*.42};
         const direction={x:player.position.x+aim.x*12-position.x,y:player.position.y+1.42+aim.y*12-position.y,z:player.position.z+aim.z*12-position.z},length=Math.hypot(direction.x,direction.y,direction.z);
-        const projectile = { id: randomUUID(), ownerId: id, kind: action, position, velocity: { x: direction.x/length*14, y: direction.y/length*14+.8, z: direction.z/length*14 }, lastAt: releasedAt, createdAt: releasedAt };
+        const velocity = snowballVelocity(facing, cameraPitch);
+        const projectile = { id: randomUUID(), ownerId: id, kind: action, position, velocity, lastAt: releasedAt, createdAt: releasedAt };
         projectiles.set(projectile.id, projectile);
         broadcast({ type: 'combat-throw', projectile: { id: projectile.id, ownerId: id, kind: action, position: projectile.position, velocity: projectile.velocity, time: releasedAt } });
       }
-      },action==='punch'?218:326).unref();
+      },action==='punch'?218:65).unref();
       return json(response, 200, { ok: true });
     } catch (error) { return json(response, error.statusCode || 400, { error: error.message || 'Não consegui completar a ação.' }); }
   }
@@ -896,7 +902,7 @@ setInterval(() => {
       const speed = 1.35, horizontalSpeed = Math.hypot(projectile.velocity.x, projectile.velocity.z) || 1;
       broadcast({ type: 'combat-impact', id: projectile.id, ownerId: projectile.ownerId, kind: projectile.kind, x: to.x, y: to.y, z: to.z, targetId: hit.id, impulse: { x: projectile.velocity.x / horizontalSpeed * speed, z: projectile.velocity.z / horizontalSpeed * speed }, time: now });
       projectiles.delete(projectileId);
-    } else if (to.y <= .12 || now - projectile.createdAt > 2600 || Math.abs(to.x) > 100 || Math.abs(to.z) > 100) {
+    } else if (to.y <= .12 || now - projectile.createdAt > 6000 || Math.abs(to.x) > 140 || Math.abs(to.z) > 140) {
       broadcast({ type: 'combat-impact', id: projectile.id, ownerId: projectile.ownerId, kind: projectile.kind, x: to.x, y: Math.max(0, to.y), z: to.z, targetId: null, time: now });
       projectiles.delete(projectileId);
     }
