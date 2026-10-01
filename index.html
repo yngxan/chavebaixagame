@@ -340,7 +340,7 @@
     if(!props?.paper||!props.body)return;const paperSamples=[new THREE.Vector3(0,-.07,0),new THREE.Vector3(),new THREE.Vector3(0,.07,0)];
     for(let i=0;i<12;i++){arm.updateWorldMatrix(true,false);const intersects=paperSamples.some(sample=>pointInsideBodyCollider(props.body,props.paper.localToWorld(sample.clone())));if(!intersects)return;const angle=arm.rotation.z;arm.rotation.z+=Math.sign(Math.PI-angle)*Math.min(.12,Math.abs(Math.PI-angle));}
   }
-  function resetSmokingArmPose(targetArms){for(const arm of targetArms){arm.position.z=0;const forearm=arm.userData.forearm;if(forearm){forearm.position.z=0;forearm.rotation.set(0,0,0);}}}
+  function resetSmokingArmPose(targetArms){for(const arm of targetArms){arm.position.z=0;for(const part of arm.userData.handParts||[])part.visible=true;const forearm=arm.userData.forearm;if(forearm){forearm.position.z=0;forearm.rotation.set(0,0,0);}}}
   function addRoundVolume(parent,center,radii,material){const mesh=new THREE.Mesh(avatarSphereGeo,material);mesh.position.set(center[0],center[1],center[2]);mesh.scale.set(radii[0],radii[1],radii[2]);mesh.castShadow=true;mesh.receiveShadow=true;parent.add(mesh);return mesh;}
   function addRoundClusters(parent,centers,radii,material){if(!centers.length)return null;const mesh=new THREE.InstancedMesh(avatarSphereGeo,material,centers.length),matrix=new THREE.Matrix4(),rotation=new THREE.Quaternion(),scale=new THREE.Vector3(radii[0],radii[1],radii[2]);for(let i=0;i<centers.length;i++){matrix.compose(new THREE.Vector3(...centers[i]),rotation,scale);mesh.setMatrixAt(i,matrix);}mesh.instanceMatrix.needsUpdate=true;mesh.castShadow=true;mesh.receiveShadow=true;parent.add(mesh);return mesh;}
   // Profiled surfaces and tapered curved locks, shared by local and remote rigs.
@@ -620,7 +620,12 @@
       arm.userData.handParts=forearm.children.slice(handStart);
       arm.userData.fist=addRoundVolume(forearm,[side*.02,-.31,.025],[.095,.105,.08],skin);arm.userData.fist.visible=false;
       arm.userData.snowball=addRoundVolume(forearm,[side*.02,-.34,.105],[.12,.12,.12],combatSnowMaterial);arm.userData.snowball.visible=false;
-      if(side===1){const glock=makeGlockModel(forearm,.82);glock.position.set(side*.02,-.33,.065);glock.visible=false;arm.userData.glock=glock;}
+      if(side===-1){const glock=makeGlockModel(forearm,.82);glock.visible=false;arm.userData.glock=glock;
+        const gripPart=(size,position)=>{const mesh=new THREE.Mesh(new THREE.BoxGeometry(...size),skin);mesh.position.set(...position);mesh.castShadow=true;glock.add(mesh);};
+        gripPart([.085,.10,.075],[-.025,-.105,-.078]);
+        gripPart([.075,.095,.075],[.075,-.13,-.06]);
+        for(let finger=0;finger<3;finger++)gripPart([.11,.017,.025],[.025,-.08-finger*.025,-.023]);
+      }
       arms.push(arm);
     }
     return {legs,arms};
@@ -646,7 +651,7 @@
     }
   }
   function animateLocalEmote(now){if(!localEmote||now>=localEmoteUntil){if(localEmote){localEmote=null;localEmoteDisplay.sprite.visible=false;bodyGroup.rotation.z=0;resetSmokingArmPose(arms);updateSmokingProps(avatarSmokingProps,false,0);}return;}setEmotePose(arms,legs,bodyGroup,localEmote,(now-localEmoteStartedAt)/1000,avatarSmokingProps);}
-  function animateRemoteEmote(entry,now){if(entry.emote==='smoke'&&entry.walking&&entry.walkSpeed>7)entry.emoteUntil=now;if(!entry.emote||now>=entry.emoteUntil){if(entry.emote){entry.emote=null;entry.emoteDisplay.sprite.visible=false;entry.body.rotation.z=0;resetSmokingArmPose(entry.arms);updateSmokingProps(entry.smokingProps,false,0);}if(entry.glockEquipped&&!entry.combatAction)holdThirdPersonGlock(entry.arms,1/60);else if(!entry.glockEquipped&&!entry.combatAction)entry.arms[1].userData.forearm.rotation.x*=.8;return;}setEmotePose(entry.arms,entry.legs,entry.body,entry.emote,(now-entry.emoteStartedAt)/1000,entry.smokingProps);}
+  function animateRemoteEmote(entry,now){if(entry.emote==='smoke'&&entry.walking&&entry.walkSpeed>7)entry.emoteUntil=now;if(!entry.emote||now>=entry.emoteUntil){if(entry.emote){entry.emote=null;entry.emoteDisplay.sprite.visible=false;entry.body.rotation.z=0;resetSmokingArmPose(entry.arms);updateSmokingProps(entry.smokingProps,false,0);}if(entry.glockEquipped&&!entry.combatAction)holdThirdPersonGlock(entry.arms,1/60);else if(!entry.glockEquipped&&!entry.combatAction)resetSmokingArmPose(entry.arms);return;}setEmotePose(entry.arms,entry.legs,entry.body,entry.emote,(now-entry.emoteStartedAt)/1000,entry.smokingProps);}
   function playLocalEmote(emote,now=performance.now()){localEmote=emote;localEmoteStartedAt=now;localEmoteUntil=now+EMOTE_DEFS[emote].duration;if(emote!=='smoke')updateSmokingProps(avatarSmokingProps,false,0);paintEmote(localEmoteDisplay,emote);}
   function playRemoteEmote(id,emote){const entry=remotePlayers.get(id),definition=EMOTE_DEFS[emote];if(!entry||!definition)return;if(entry.combatAction){resetCombatPose(entry.arms,entry.body);entry.combatAction=null;}entry.emote=emote;entry.emoteStartedAt=performance.now();entry.emoteUntil=entry.emoteStartedAt+definition.duration;if(emote!=='smoke')updateSmokingProps(entry.smokingProps,false,0);paintEmote(entry.emoteDisplay,emote);}
   let localCombat=null,localCombatNextAt=0,pendingCombatImpulse={x:0,z:0};
@@ -654,21 +659,30 @@
   let glockEquipped=false,glockAmmo=20,glockReserve=120,glockReloading=false,glockReloadStartedAt=0,glockRecoil=0,lastGlockShotAt=0,localHealth=100,localDeadUntil=0,localDeadPosition=null;
   const weaponName=document.getElementById('weaponName'),ammoReadout=document.getElementById('ammoReadout'),healthReadout=document.getElementById('healthReadout');
   function updateWeaponHud(){weaponName.textContent=glockEquipped?'GLOCK':'SOCO';ammoReadout.hidden=!glockEquipped;ammoReadout.textContent=glockReloading?'RECARREGANDO…':`${glockAmmo} / ${glockReserve}`;healthReadout.textContent=`${localHealth} HP`;const button=document.querySelector('[data-combat="weapon"]'),attack=document.querySelector('[data-combat="attack"]');if(button){button.textContent=glockEquipped?'👊':'🔫';button.setAttribute('aria-label',glockEquipped?'Guardar Glock e usar soco':'Equipar Glock');button.title=glockEquipped?'Guardar Glock e usar soco · Q':'Equipar Glock · Q';button.classList.toggle('equipped',glockEquipped);}if(attack){attack.textContent=glockEquipped?'🔫':'👊';attack.setAttribute('aria-label',glockEquipped?'Disparar Glock':'Dar soco');}}
-  function setGlockEquipped(equipped,announce=true){glockEquipped=Boolean(equipped);if(arms[1]?.userData.glock)arms[1].userData.glock.visible=glockEquipped;if(firstPersonHand?.userData.glock)firstPersonHand.userData.glock.visible=glockEquipped&&firstPerson;updateWeaponHud();if(announce)showToast(glockEquipped?`GLOCK EQUIPADA · ${glockAmmo}/${glockReserve}`:'SOCO EQUIPADO');}
+  function setGlockEquipped(equipped,announce=true){glockEquipped=Boolean(equipped);if(arms[0]?.userData.glock)arms[0].userData.glock.visible=glockEquipped;if(firstPersonHand?.userData.glock)firstPersonHand.userData.glock.visible=glockEquipped&&firstPerson;updateWeaponHud();if(announce)showToast(glockEquipped?`GLOCK EQUIPADA · ${glockAmmo}/${glockReserve}`:'SOCO EQUIPADO');}
   sharedAvatarMaterials.add(combatSnowMaterial);
   const combatProjectileGeometry=new THREE.SphereGeometry(.15,12,9);
   let firstPersonHand=null;
   function makeFirstPersonHand(){
     if(firstPersonHand){camera.remove(firstPersonHand);disposeAvatarResources(firstPersonHand);}
-    const group=new THREE.Group(),skin=smoothMaterial(colors.skin),sleeve=smoothMaterial(colors.shirt),snow=combatSnowMaterial.clone();
-    addRoundVolume(group,[0,-.24,.025],[.105,.28,.105],sleeve);
-    addRoundVolume(group,[0,.045,-.02],[.10,.115,.10],skin);
-    addRoundVolume(group,[-.065,.012,-.075],[.042,.06,.045],skin);
-    const supportSleeve=addRoundVolume(group,[-.15,-.27,-.025],[.07,.22,.075],sleeve);supportSleeve.rotation.z=.48;supportSleeve.visible=false;group.userData.supportSleeve=supportSleeve;
-    const supportHand=addRoundVolume(group,[-.045,-.13,-.18],[.075,.075,.09],skin);supportHand.visible=false;group.userData.supportHand=supportHand;
-    const ball=addRoundVolume(group,[0,.16,-.055],[.13,.13,.13],snow);ball.visible=false;group.userData.ball=ball;
-    const glock=makeGlockModel(group,.68);glock.position.set(-.015,.04,-.14);glock.rotation.y=Math.PI;glock.visible=false;glock.traverse(mesh=>{if(mesh.isMesh){mesh.renderOrder=102;mesh.material.depthTest=false;mesh.material.depthWrite=false;}});group.userData.glock=glock;
-    group.traverse(mesh=>{if(!mesh.isMesh)return;mesh.castShadow=false;mesh.receiveShadow=false;mesh.renderOrder=100;mesh.material.depthTest=false;mesh.material.depthWrite=false;});
+    const group=new THREE.Group(),normal=new THREE.Group(),rig=new THREE.Group(),skin=smoothMaterial(colors.skin),sleeve=smoothMaterial(colors.shirt),snow=combatSnowMaterial.clone();
+    group.add(normal,rig);group.userData.normalHand=normal;group.userData.weaponRig=rig;
+    addRoundVolume(normal,[0,-.24,.025],[.105,.28,.105],sleeve);
+    addRoundVolume(normal,[0,.045,-.02],[.10,.115,.10],skin);
+    addRoundVolume(normal,[-.065,.012,-.075],[.042,.06,.045],skin);
+    const ball=addRoundVolume(normal,[0,.16,-.055],[.13,.13,.13],snow);ball.visible=false;group.userData.ball=ball;
+    const part=(size,position,material)=>{const mesh=new THREE.Mesh(new THREE.BoxGeometry(...size),material);mesh.position.set(...position);rig.add(mesh);return mesh;};
+    const sleeveBetween=(a,b)=>{const from=new THREE.Vector3(...a),to=new THREE.Vector3(...b),direction=to.clone().sub(from),mesh=new THREE.Mesh(new THREE.CylinderGeometry(.055,.072,direction.length(),10),sleeve);mesh.position.copy(from.add(to).multiplyScalar(.5));mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());rig.add(mesh);};
+    sleeveBetween([.10,-.39,.14],[.02,-.09,-.065]);
+    sleeveBetween([-.23,-.38,.12],[-.075,-.08,-.10]);
+    part([.082,.105,.083],[.01,-.042,-.10],skin);
+    part([.067,.095,.078],[-.057,-.046,-.11],skin);
+    part([.028,.042,.07],[-.043,.003,-.085],skin);
+    for(let finger=0;finger<3;finger++)part([.085,.018,.026],[-.018,-.018-finger*.026,-.15],skin);
+    const glock=makeGlockModel(rig,.68);glock.position.set(0,.035,-.15);glock.rotation.y=Math.PI;group.userData.glock=glock;
+    rig.visible=false;
+    group.traverse(mesh=>{mesh.layers.set(1);if(!mesh.isMesh)return;mesh.castShadow=false;mesh.receiveShadow=false;mesh.renderOrder=0;mesh.material.depthTest=true;mesh.material.depthWrite=true;});
+    scene.traverse(object=>{if(object.isLight)object.layers.enable(1);});
     group.visible=false;camera.add(group);if(!camera.parent)scene.add(camera);firstPersonHand=group;
   }
   function updateFirstPersonHand(now,visible){
@@ -680,7 +694,9 @@
     const reloadProgress=glockReloading?Math.max(0,Math.min(1,(now-glockReloadStartedAt)/1450)):0,reloadMotion=Math.sin(reloadProgress*Math.PI);
     group.position.set((.47-extension*.17)*horizontalFit,-.39+extension*.11+bob-reloadMotion*.09,-.88-extension*.18);
     group.rotation.set(-.12-extension*.45+(action?.kind==='snowball'?action.pitch*.45:0),-extension*.15,.08-extension*.1+reloadMotion*.5);
-    group.userData.ball.visible=action?.kind==='snowball'&&p<.155;group.userData.glock.visible=glockEquipped&&visible;group.userData.supportSleeve.visible=glockEquipped&&visible;group.userData.supportHand.visible=glockEquipped&&visible;
+    const weaponPose=glockEquipped&&(!action||action.kind==='glock');
+    if(weaponPose){const kick=action?Math.sin(p*Math.PI)*.055:0;group.position.set(.32*horizontalFit,-.27+bob+kick-reloadMotion*.08,-.82+kick);group.rotation.set(.015+kick*.9,.12,-.025+reloadMotion*.35);}
+    group.userData.normalHand.visible=!weaponPose;group.userData.weaponRig.visible=weaponPose;group.userData.ball.visible=action?.kind==='snowball'&&p<.155;group.userData.glock.visible=glockEquipped;
   }
   function showCombatBadge(display,kind,duration=850){if(!display||!EMOTE_DEFS[kind])return;paintEmote(display,kind);const expires=performance.now()+duration;setTimeout(()=>{if(display.expiresAt===expires)display.sprite.visible=false;},duration);display.expiresAt=expires;}
   function beginLocalCombat(kind,now=performance.now(),pitch=0,isFirstPerson=firstPerson){localEmote=null;localEmoteUntil=0;if(localEmoteDisplay)localEmoteDisplay.sprite.visible=false;resetCombatPose(arms,bodyGroup);updateSmokingProps(avatarSmokingProps,false,0);const duration=kind==='snowball'?420:kind==='glock'?145:520;localCombat={kind,startedAt:now,until:now+duration,facing:avatar.rotation.y,pitch:kind==='snowball'||kind==='glock'?pitch:0,firstPerson:isFirstPerson};showCombatBadge(localEmoteDisplay,kind,duration);}
@@ -698,27 +714,38 @@
   }
   function applyCombatPose(targetArms,action,now,targetBody){
     if(!action)return false;if(now>=action.until){resetCombatPose(targetArms,targetBody);return false;}
-    const progress=Math.max(0,(now-action.startedAt)/(action.until-action.startedAt)),pose=combatPoseAt(action.kind,progress),arm=targetArms[action.kind==='snowball'&&!action.firstPerson?0:1],forearm=arm.userData.forearm;
+    const progress=Math.max(0,(now-action.startedAt)/(action.until-action.startedAt)),pose=combatPoseAt(action.kind,progress),arm=targetArms[action.kind==='glock'||action.kind==='snowball'&&!action.firstPerson?0:1],forearm=arm.userData.forearm;
     if(targetBody){targetBody.rotation.y=0;targetBody.rotation.z=0;}for(const other of targetArms){other.position.z=0;other.rotation.y=0;}
     arm.rotation.set(pose.shoulder+(action.kind==='snowball'?(action.pitch||0)*.45:0),0,pose.outward);if(forearm){forearm.position.z=0;forearm.rotation.set(pose.elbow,0,0);}
     for(const part of arm.userData.handParts||[])part.visible=action.kind==='glock';if(arm.userData.fist)arm.userData.fist.visible=action.kind!=='glock';if(arm.userData.snowball)arm.userData.snowball.visible=action.kind==='snowball'&&progress<.155;
     if(action.kind==='glock'){
-      const support=targetArms[0],supportForearm=support.userData.forearm;
-      support.rotation.set(-1.02,0,.78);supportForearm.rotation.set(-.42,0,.68);
-      if(arm.userData.glock)arm.userData.glock.rotation.x=-arm.rotation.x-forearm.rotation.x;
+      holdThirdPersonGlock(targetArms,0,false,Math.sin(progress*Math.PI)*.025);
     }
     return true;
   }
-  function holdThirdPersonGlock(targetArms,dt,reloading=false){
-    const arm=targetArms[1],forearm=arm.userData.forearm,support=targetArms[0],supportForearm=support.userData.forearm,blend=1-Math.exp(-12*dt);
-    arm.rotation.x=THREE.MathUtils.lerp(arm.rotation.x,reloading?-.82:-1.05,blend);
-    arm.rotation.z=THREE.MathUtils.lerp(arm.rotation.z,-.25,blend);
-    forearm.rotation.x=THREE.MathUtils.lerp(forearm.rotation.x,reloading?-.85:-.45,blend);
-    support.rotation.x=THREE.MathUtils.lerp(support.rotation.x,-1.02,blend);
-    support.rotation.z=THREE.MathUtils.lerp(support.rotation.z,.78,blend);
-    supportForearm.rotation.x=THREE.MathUtils.lerp(supportForearm.rotation.x,-.42,blend);
-    supportForearm.rotation.z=THREE.MathUtils.lerp(supportForearm.rotation.z,.68,blend);
-    if(arm.userData.glock)arm.userData.glock.rotation.x=-arm.rotation.x-forearm.rotation.x;
+  function placeWeaponArm(arm,wrist,pole){
+    const forearm=arm.userData.forearm,side=arm.userData.side;
+    arm.position.z=0;forearm.position.set(side*.06,-.24,0);
+    const upper=forearm.position.clone(),lower=new THREE.Vector3(side*.02,-.30,.018),origin=arm.position.clone();
+    const direction=wrist.clone().sub(origin),distance=Math.min(direction.length(),upper.length()+lower.length()-.001);direction.normalize();
+    const along=(upper.lengthSq()-lower.lengthSq()+distance*distance)/(2*distance),height=Math.sqrt(Math.max(0,upper.lengthSq()-along*along));
+    const bend=pole.clone().sub(origin);bend.addScaledVector(direction,-bend.dot(direction)).normalize();
+    const elbow=origin.clone().addScaledVector(direction,along).addScaledVector(bend,height);
+    arm.quaternion.setFromUnitVectors(upper.normalize(),elbow.clone().sub(origin).normalize());
+    const lowerDirection=wrist.clone().sub(elbow).applyQuaternion(arm.quaternion.clone().invert()).normalize();
+    forearm.quaternion.setFromUnitVectors(lower.normalize(),lowerDirection);
+  }
+  function holdThirdPersonGlock(targetArms,dt,reloading=false,recoil=0){
+    // The avatar faces +Z: anatomical right is -X (arm 0).
+    const right=targetArms[0],left=targetArms[1],height=reloading?1.31:1.43,reach=reloading?.36:.43;
+    placeWeaponArm(right,new THREE.Vector3(-.055,height,reach-recoil),new THREE.Vector3(-.65,1.07,.17));
+    placeWeaponArm(left,new THREE.Vector3(.025,height-.025,reach+.015-recoil),new THREE.Vector3(.65,1.07,.17));
+    for(const arm of targetArms){for(const part of arm.userData.handParts||[])part.visible=false;if(arm.userData.fist)arm.userData.fist.visible=false;}
+    const gun=right.userData.glock,forearm=right.userData.forearm;
+    if(gun){const joint=right.quaternion.clone().multiply(forearm.quaternion);gun.quaternion.copy(joint.invert());
+      const grip=new THREE.Vector3(0,-.105,-.075).multiplyScalar(gun.scale.x).applyQuaternion(gun.quaternion);
+      gun.position.set(-.02,-.30,.018).sub(grip);
+    }
   }
   function spawnCombatProjectile(data){if(!data?.id||combatProjectiles.has(data.id))return;const mesh=new THREE.Mesh(combatProjectileGeometry,combatSnowMaterial);mesh.castShadow=true;scene.add(mesh);combatProjectiles.set(data.id,{mesh,kind:data.kind,position:data.position,velocity:data.velocity,startedAt:performance.now()});}
   function removeCombatProjectile(id){const projectile=combatProjectiles.get(id);if(!projectile)return;scene.remove(projectile.mesh);combatProjectiles.delete(id);}
@@ -740,7 +767,7 @@
     const payload={id:localId,action,facing:localCombat.facing,pitch:localCombat.pitch,firstPerson:isFirstPerson};let muzzle=null;
     if(action==='glock'){
       if(isFirstPerson&&firstPersonHand?.userData.glock){updateFirstPersonHand(now,true);camera.updateMatrixWorld(true);firstPersonHand.userData.glock.updateWorldMatrix(true,true);muzzle=firstPersonHand.userData.glock.userData.muzzle;payload.cameraYaw=yaw;}
-      else if(arms[1]?.userData.glock){arms[1].userData.glock.updateWorldMatrix(true,true);muzzle=arms[1].userData.glock.userData.muzzle;}
+      else if(arms[0]?.userData.glock){applyCombatPose(arms,localCombat,now,bodyGroup);arms[0].userData.glock.updateWorldMatrix(true,true);muzzle=arms[0].userData.glock.userData.muzzle;}
       if(muzzle){const world=new THREE.Vector3();muzzle.getWorldPosition(world);payload.launchOrigin={x:world.x,y:world.y,z:world.z};playGlockSound(payload.launchOrigin);}
     }else if(action==='snowball'&&isFirstPerson&&firstPersonHand?.userData.ball){updateFirstPersonHand(now,true);camera.updateMatrixWorld(true);const handPosition=new THREE.Vector3();firstPersonHand.userData.ball.getWorldPosition(handPosition);payload.cameraYaw=yaw;payload.launchOrigin={x:handPosition.x,y:handPosition.y,z:handPosition.z};}
     try{const response=await fetch('/api/combat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});if(!response.ok){resetCombatPose(arms,bodyGroup);localCombat=null;const result=await response.json().catch(()=>({}));if(action==='glock'){glockAmmo=Math.min(20,glockAmmo+1);if(response.status===429)lastGlockShotAt=performance.now()-1000;updateWeaponHud();}else if(response.status===429)localCombatNextAt=performance.now()+350;showToast(result.error||'NÃO FOI POSSÍVEL ATACAR');}}catch{resetCombatPose(arms,bodyGroup);localCombat=null;if(action==='glock'){glockAmmo=Math.min(20,glockAmmo+1);updateWeaponHud();}showToast('SALA DESCONECTADA · AÇÃO NÃO ENVIADA');}
@@ -817,7 +844,7 @@ function updateSfuSpatialAudio(){for(const [id,subscription] of sfuSubscribers){
     const x=finite(position.x),y=finite(position.y),z=finite(position.z),signature=JSON.stringify([name,appearance]);let entry=remotePlayers.get(player.id);
     if(!entry||entry.signature!==signature){if(entry)disposeRemote(entry);const model=makeNetworkAvatar(appearance,name);model.group.position.set(x,y,z);model.group.rotation.y=finite(player.rotation);entry={...model,target:new THREE.Vector3(x,y,z),rotation:finite(player.rotation),signature,motionUntil:0,inferredSpeed:0,voiceEnabled:Boolean(player.voiceEnabled),voiceSessionId:player.voiceSessionId||null,snapshots:[{at:performance.now(),x,y,z,rotation:finite(player.rotation)}]};remotePlayers.set(player.id,entry);}
     entry.glockEquipped=Boolean(player.glockEquipped);
-    if(entry.arms[1]?.userData.glock)entry.arms[1].userData.glock.visible=entry.glockEquipped;
+    if(entry.arms[0]?.userData.glock)entry.arms[0].userData.glock.visible=entry.glockEquipped;
     const dx=x-entry.target.x,dy=y-entry.target.y,dz=z-entry.target.z,distanceMoved=Math.hypot(dx,dz),now=performance.now(),teleported=Math.hypot(dx,dy,dz)>20;
     if(teleported){entry.snapshots.length=0;entry.motionUntil=0;entry.inferredSpeed=0;entry.group.position.set(x,y,z);}else if(distanceMoved>.006){entry.motionUntil=now+220;entry.inferredSpeed=Math.min(8,distanceMoved*12.5);}
     const rotation=finite(player.rotation);entry.target.set(x,y,z);entry.rotation=rotation;entry.voiceEnabled=Boolean(player.voiceEnabled);entry.voiceSessionId=player.voiceSessionId||null;entry.snapshots.push({at:now,x,y,z,rotation});if(entry.snapshots.length>8)entry.snapshots.shift();entry.walking=Boolean(player.walking)||now<entry.motionUntil;entry.jumping=Boolean(player.jumping)||y>.05;entry.walkSpeed=Math.max(finite(player.speed),now<entry.motionUntil?entry.inferredSpeed:0);updateRoomStatus();updateVoiceButton();
@@ -957,10 +984,10 @@ window.addEventListener('keydown',e=>{if(e.target instanceof HTMLInputElement||e
     if(onGround)moveVelocity.lerp(desiredVelocity,1-Math.exp(-(hasInput?11:15)*dt));else if(hasInput){const airLimit=9+Math.min(bhopChain*.55,2.2),airSpeed=Math.min(airLimit,Math.max(moveVelocity.length(),(keys.has('ShiftLeft')||keys.has('ShiftRight'))?9:5.8));desiredVelocity.copy(inputDirection).multiplyScalar(airSpeed);moveVelocity.lerp(desiredVelocity,1-Math.exp(-12*dt));if(moveVelocity.length()>airLimit)moveVelocity.setLength(airLimit);}else moveVelocity.multiplyScalar(Math.exp(-.65*dt));if(pendingCombatImpulse.x||pendingCombatImpulse.z){moveVelocity.x+=pendingCombatImpulse.x;moveVelocity.z+=pendingCombatImpulse.z;pendingCombatImpulse={x:0,z:0};}const requestedX=moveVelocity.x*dt,requestedZ=moveVelocity.z*dt,collision=moveWithWorldCollision(avatar.position,requestedX,requestedZ);tryStepUp();if(collision.x)moveVelocity.x=0;if(collision.z)moveVelocity.z=0;const actualSpeed=moveVelocity.length();currentMoveSpeed=actualSpeed;const running=(keys.has('ShiftLeft')||keys.has('ShiftRight'))&&actualSpeed>6.8;if(actualSpeed>.16){avatar.rotation.y=Math.atan2(moveVelocity.x,moveVelocity.z);walkTime+=dt*actualSpeed;legs[0].rotation.x=Math.sin(walkTime)*.5;legs[1].rotation.x=-Math.sin(walkTime)*.5;if(running){bodyGroup.rotation.x=THREE.MathUtils.damp(bodyGroup.rotation.x,.22,9,dt);arms[0].rotation.x=1.22+Math.sin(walkTime)*.045;arms[1].rotation.x=1.22-Math.sin(walkTime)*.045;arms[0].rotation.z=-.08;arms[1].rotation.z=.08;}else{bodyGroup.rotation.x=THREE.MathUtils.damp(bodyGroup.rotation.x,0,9,dt);arms[0].rotation.x=-Math.sin(walkTime)*.38;arms[1].rotation.x=Math.sin(walkTime)*.38;arms[0].rotation.z*=.78;arms[1].rotation.z*=.78;}}
     else{bodyGroup.rotation.x=THREE.MathUtils.damp(bodyGroup.rotation.x,0,8,dt);legs.forEach(l=>l.rotation.x*=.75);arms.forEach(a=>{a.rotation.x*=.75;a.rotation.z*=.78;});}
     if(keys.has('Space')&&onGround){const chaining=performance.now()-lastLandingAt<180&&moveVelocity.length()>4.2;if(chaining){bhopChain=Math.min(4,bhopChain+1);moveVelocity.addScaledVector(moveVelocity.clone().normalize(),.55+bhopChain*.12);velocityY=7.4;}else{bhopChain=0;velocityY=7.2;}onGround=false;}const previousY=avatar.position.y;velocityY-=20*dt;avatar.position.y+=velocityY*dt;const landedOnProp=resolvePlatformLanding(previousY);const overIsland=Math.abs(avatar.position.x)<=50&&Math.abs(avatar.position.z)<=50;if(!landedOnProp&&avatar.position.y<0){if(overIsland){avatar.position.y=0;velocityY=0;if(!onGround)lastLandingAt=performance.now();onGround=true;}else{onGround=false;}}const airborne=avatar.position.y>.05;if(airborne){const stride=actualSpeed>.2?Math.sin(walkTime)*.2:0;if(running){bodyGroup.rotation.x=THREE.MathUtils.damp(bodyGroup.rotation.x,.22,12,dt);legs[0].rotation.x=-.34+stride;legs[1].rotation.x=-.34-stride;arms[0].rotation.x=1.15+Math.sin(walkTime)*.04;arms[1].rotation.x=1.15-Math.sin(walkTime)*.04;arms[0].rotation.z=-.04;arms[1].rotation.z=.04;}else{bodyGroup.rotation.x=THREE.MathUtils.damp(bodyGroup.rotation.x,0,8,dt);legs[0].rotation.x=-.28+stride;legs[1].rotation.x=-.28-stride;arms[0].rotation.x=actualSpeed>.2?-Math.sin(walkTime)*.18:0;arms[1].rotation.x=actualSpeed>.2?Math.sin(walkTime)*.18:0;arms[0].rotation.z=-.5;arms[1].rotation.z=.5;}}else{arms[0].rotation.z*=.78;arms[1].rotation.z*=.78;}if(avatar.position.y< -45){avatar.position.set(spawnPoint.x,18,spawnPoint.z);velocityY=0;onGround=false;moveVelocity.set(0,0,0);bhopChain=0;lastLandingAt=-Infinity;showToast('CAIU DA ILHA · VOLTANDO PRA PRAÇA');}
-    if(localEmote==='smoke'&&running){localEmote=null;localEmoteUntil=0;localEmoteDisplay.sprite.visible=false;bodyGroup.rotation.z=0;resetSmokingArmPose(arms);updateSmokingProps(avatarSmokingProps,false,0);}else if(localEmote==='smoke')setEmotePose(arms,legs,bodyGroup,'smoke',(performance.now()-localEmoteStartedAt)/1000,avatarSmokingProps);animateLocalEmote(performance.now());if(glockEquipped&&!localCombat&&!localEmote)holdThirdPersonGlock(arms,dt,glockReloading);else if(!glockEquipped&&!localCombat&&!localEmote)arms[1].userData.forearm.rotation.x=THREE.MathUtils.damp(arms[1].userData.forearm.rotation.x,0,12,dt);if(localCombat){avatar.rotation.y=localCombat.facing;if(!applyCombatPose(arms,localCombat,performance.now(),bodyGroup))localCombat=null;}
+    if(localEmote==='smoke'&&running){localEmote=null;localEmoteUntil=0;localEmoteDisplay.sprite.visible=false;bodyGroup.rotation.z=0;resetSmokingArmPose(arms);updateSmokingProps(avatarSmokingProps,false,0);}else if(localEmote==='smoke')setEmotePose(arms,legs,bodyGroup,'smoke',(performance.now()-localEmoteStartedAt)/1000,avatarSmokingProps);animateLocalEmote(performance.now());if(glockEquipped&&!localCombat&&!localEmote)holdThirdPersonGlock(arms,dt,glockReloading);else if(!glockEquipped&&!localCombat&&!localEmote)resetSmokingArmPose(arms);if(localCombat){avatar.rotation.y=localCombat.facing;if(!applyCombatPose(arms,localCombat,performance.now(),bodyGroup))localCombat=null;}
     syncHeadToRunLean(bodyGroup,headGroup);idleBreathBlend=THREE.MathUtils.damp(idleBreathBlend,onGround&&actualSpeed<.16&&!localEmote?1:0,5,dt);applyIdleBreath(bodyGroup,headGroup,idleBreathBlend,clock.elapsedTime);
     firstPerson=distance<.8;headGroup.visible=!firstPerson;bodyGroup.visible=true;nameSprite.visible=!firstPerson;localChatBubble.sprite.visible=!firstPerson&&performance.now()<localChatBubble.expiresAt;camLabel.classList.toggle('show',firstPerson);crosshair.hidden=!authenticatedUser||!startScreen.classList.contains('hidden');touchCameraLabel.textContent=firstPerson?'3ª':'1ª';touchCamera.setAttribute('aria-label',firstPerson?'Mudar para terceira pessoa':'Mudar para primeira pessoa');touchCamera.setAttribute('aria-pressed',String(firstPerson));
-    const showHand=firstPerson&&!localEmote&&(pitch<.95||Boolean(localCombat)||glockEquipped);arms[0].visible=!(firstPerson&&glockEquipped);arms[1].visible=!showHand;if(arms[1]?.userData.glock)arms[1].userData.glock.visible=glockEquipped;crosshair.style.transform=`translate(-50%,-50%) scale(${glockEquipped?1+Math.min(1.1,glockRecoil*.055+currentMoveSpeed*.018+(onGround?0:.16)):1})`;
+    const showHand=firstPerson&&!localEmote&&(pitch<.95||Boolean(localCombat)||glockEquipped);arms[0].visible=!(firstPerson&&glockEquipped);arms[1].visible=!showHand&&!firstPerson;if(arms[0]?.userData.glock)arms[0].userData.glock.visible=glockEquipped;crosshair.style.transform=`translate(-50%,-50%) scale(${glockEquipped?1+Math.min(1.1,glockRecoil*.055+currentMoveSpeed*.018+(onGround?0:.16)):1})`;
     const target=new THREE.Vector3(avatar.position.x,avatar.position.y+1.42,avatar.position.z);
     if(firstPerson){camera.position.set(avatar.position.x,avatar.position.y+1.96,avatar.position.z);camera.lookAt(camera.position.x-Math.sin(yaw)*Math.cos(pitch),camera.position.y-Math.sin(pitch),camera.position.z+Math.cos(yaw)*Math.cos(pitch));}
     else{const horizontal=distance*Math.cos(pitch);camera.position.set(target.x+Math.sin(yaw)*horizontal,target.y+distance*Math.sin(pitch),target.z-Math.cos(yaw)*horizontal);camera.lookAt(target);}
@@ -969,7 +996,7 @@ window.addEventListener('keydown',e=>{if(e.target instanceof HTMLInputElement||e
     const remoteRenderTime=performance.now()-85;for(const entry of remotePlayers.values()){const snapshots=entry.snapshots;while(snapshots.length>2&&snapshots[1].at<remoteRenderTime)snapshots.shift();let a=snapshots[0],b=snapshots[1]||a,x=a.x,y=a.y,z=a.z,rotation=a.rotation;if(b!==a&&remoteRenderTime<=b.at){const span=Math.max(1,b.at-a.at),t=Math.max(0,Math.min(1,(remoteRenderTime-a.at)/span));x=a.x+(b.x-a.x)*t;y=a.y+(b.y-a.y)*t;z=a.z+(b.z-a.z)*t;const turn=Math.atan2(Math.sin(b.rotation-a.rotation),Math.cos(b.rotation-a.rotation));rotation=a.rotation+turn*t;}else if(b!==a){const span=Math.max(1,b.at-a.at),ahead=Math.min(90,Math.max(0,remoteRenderTime-b.at))/span;x=b.x+(b.x-a.x)*ahead;y=b.y+(b.y-a.y)*ahead;z=b.z+(b.z-a.z)*ahead;rotation=b.rotation;}entry.group.position.set(x,y,z);entry.group.rotation.y=rotation;const airborne=y>.05||(entry.jumping&&y>.015),running=entry.walking&&entry.walkSpeed>7;if(airborne){const stride=entry.walking?Math.sin(entry.walkTime)*.2:0;if(running){entry.body.rotation.x=THREE.MathUtils.damp(entry.body.rotation.x,.22,12,dt);entry.legs[0].rotation.x=-.34+stride;entry.legs[1].rotation.x=-.34-stride;entry.arms[0].rotation.x=1.15+Math.sin(entry.walkTime)*.04;entry.arms[1].rotation.x=1.15-Math.sin(entry.walkTime)*.04;entry.arms[0].rotation.z=-.04;entry.arms[1].rotation.z=.04;}else{entry.body.rotation.x=THREE.MathUtils.damp(entry.body.rotation.x,0,8,dt);entry.legs[0].rotation.x=-.28+stride;entry.legs[1].rotation.x=-.28-stride;entry.arms[0].rotation.x=entry.walking?-Math.sin(entry.walkTime)*.18:0;entry.arms[1].rotation.x=entry.walking?Math.sin(entry.walkTime)*.18:0;entry.arms[0].rotation.z=-.5;entry.arms[1].rotation.z=.5;}}else if(entry.walking){entry.walkTime+=dt*Math.max(2.6,entry.walkSpeed*1.25);const swing=Math.sin(entry.walkTime)*.72;entry.legs[0].rotation.x=swing;entry.legs[1].rotation.x=-swing;if(running){entry.body.rotation.x=THREE.MathUtils.damp(entry.body.rotation.x,.22,9,dt);entry.arms[0].rotation.x=1.22+Math.sin(entry.walkTime)*.045;entry.arms[1].rotation.x=1.22-Math.sin(entry.walkTime)*.045;entry.arms[0].rotation.z=-.08;entry.arms[1].rotation.z=.08;}else{entry.body.rotation.x=THREE.MathUtils.damp(entry.body.rotation.x,0,9,dt);entry.arms[0].rotation.x=-Math.sin(entry.walkTime)*.52;entry.arms[1].rotation.x=Math.sin(entry.walkTime)*.52;entry.arms[0].rotation.z*=.78;entry.arms[1].rotation.z*=.78;}entry.group.position.y+=Math.abs(Math.sin(entry.walkTime*2))*.045;}else{entry.body.rotation.x=THREE.MathUtils.damp(entry.body.rotation.x,0,8,dt);entry.legs.forEach(leg=>leg.rotation.x*=.78);entry.arms.forEach(arm=>{arm.rotation.x*=.78;arm.rotation.z*=.78;});}animateRemoteEmote(entry,performance.now());if(entry.combatAction){entry.group.rotation.y=entry.combatAction.facing;if(!applyCombatPose(entry.arms,entry.combatAction,performance.now(),entry.body))entry.combatAction=null;}syncHeadToRunLean(entry.body,entry.head);entry.idleBreathBlend=THREE.MathUtils.damp(entry.idleBreathBlend,!airborne&&!entry.walking&&!entry.emote?1:0,5,dt);applyIdleBreath(entry.body,entry.head,entry.idleBreathBlend,clock.elapsedTime); }fireflies.forEach(f=>{f.mesh.position.y=f.baseY+Math.sin(clock.elapsedTime*1.25+f.phase)*.32;f.mesh.scale.setScalar(.055+Math.max(0,Math.sin(clock.elapsedTime*2+f.phase))*.05);});
     clouds.forEach(c=>{c.group.position.x=c.x+Math.sin(clock.elapsedTime*.055+c.phase)*.75;c.group.position.y=c.y+Math.sin(clock.elapsedTime*.12+c.phase)*.22;c.group.position.z=c.z+Math.cos(clock.elapsedTime*.045+c.phase)*.45;});
     for(const entry of remotePlayers.values())if(entry.emote==='smoke'){if(entry.walking&&entry.walkSpeed>7)animateRemoteEmote(entry,performance.now());else setEmotePose(entry.arms,entry.legs,entry.body,'smoke',(performance.now()-entry.emoteStartedAt)/1000,entry.smokingProps);}
-    renderer.render(scene,camera);}
+    renderer.render(scene,camera);if(firstPersonHand?.visible){renderer.autoClear=false;renderer.clearDepth();camera.layers.set(1);renderer.render(scene,camera);camera.layers.set(0);renderer.autoClear=true;}}
   animate();(function animateCombatProjectiles(){const now=performance.now();for(const[id,projectile]of combatProjectiles){const age=(now-projectile.startedAt)/1000;if(age>6.3){removeCombatProjectile(id);continue;}projectile.mesh.position.set(projectile.position.x+projectile.velocity.x*age,projectile.position.y+projectile.velocity.y*age-4.9*age*age,projectile.position.z+projectile.velocity.z*age);}requestAnimationFrame(animateCombatProjectiles);})();window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
   document.getElementById('emoteBar').addEventListener('click',event=>{const button=event.target.closest('[data-emote]');if(button){void triggerEmote(button.dataset.emote);setMobileEmotes(false);}});
   document.getElementById('combatBar').addEventListener('click',event=>{const button=event.target.closest('[data-combat]');if(button)void triggerCombat(button.dataset.combat);});
