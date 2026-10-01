@@ -10,6 +10,17 @@ import {once} from 'node:events';
 import {setTimeout as delay} from 'node:timers/promises';
 import vm from 'node:vm';
 
+test('YouTube links with shared parameters, shorts and multiple lines remain valid',async()=>{
+ const source=await readFile(new URL('../stage-media.js',import.meta.url),'utf8');
+ const parser=source.match(/function parseVideoLink\(text\)\{(.+?)return id;\}/)[0];
+ const parse=Function('return ('+parser+')')();
+ for(const url of ['https://www.youtube.com/watch?v=M7lc1UVf-VE','https://youtu.be/M7lc1UVf-VE?si=test','https://m.youtube.com/shorts/M7lc1UVf-VE','https://www.youtube.com/live/M7lc1UVf-VE?feature=share'])assert.equal(parse(url),'M7lc1UVf-VE');
+ assert.throws(()=>parse('https://example.com/watch?v=M7lc1UVf-VE'));
+ assert.throws(()=>parse('https://www.youtube.com/watch?v=short'));
+ assert.ok(source.includes('split(/\\s+/)'));
+ assert.ok(source.includes("join('\\n')"));
+});
+
 test('video is composed behind the depth-tested world, not on top of avatars',async()=>{
  const html=await readFile(new URL('../index.html',import.meta.url),'utf8'),media=await readFile(new URL('../stage-media.js',import.meta.url),'utf8');
  assert.match(html,/WebGLRenderer\(\{alpha:true/);
