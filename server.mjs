@@ -489,7 +489,7 @@ const server = createServer(async (request, response) => {
     const profile = cleanProfile(authenticatedAccount.profile, authenticatedAccount.username.toUpperCase());
     const player = {
       id, accountId: authenticatedAccount.id, name: profile.name, appearance: profile.appearance,
-      position: { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false, voiceSessionId: null,
+      position: { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false, voiceSessionId: null, health: 100, glockEquipped: false,
     };
     response.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -498,9 +498,9 @@ const server = createServer(async (request, response) => {
       'x-accel-buffering': 'no',
     });
     response.flushHeaders();
-    clients.set(id, { response, accountId: authenticatedAccount.id, lastStateAt: 0, lastChatAt: 0, lastEmoteAt: -Infinity, lastCombatAt: -Infinity, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
+    clients.set(id, { response, accountId: authenticatedAccount.id, lastStateAt: 0, lastChatAt: 0, lastEmoteAt: -Infinity, lastCombatAt: -Infinity, weapon: { mag: 20, reserve: 120, reloadingUntil: 0, lastShotAt: -Infinity, lastBurstAt: -Infinity, burst: 0 }, deadUntil: 0, respawnPosition: { x: Math.cos(angle) * radius, y: 0, z: 5 + Math.sin(angle) * radius }, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
     players.set(id, player);
-    send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: stageSnapshot(authenticatedAccount.id) });
+    send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: stageSnapshot(authenticatedAccount.id), weapon: { mag: 20, reserve: 120, reloading: false }, health: 100 });
     broadcast({ type: 'join', player }, id);
     response.on('close', () => {
       const current = clients.get(id);
@@ -520,6 +520,19 @@ const server = createServer(async (request, response) => {
       const player = players.get(String(data.id || ''));
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       const now = Date.now();
+      if (client.deadUntil) {
+        if (now < client.deadUntil) { response.writeHead(204); return response.end(); }
+        client.deadUntil = 0;
+        player.position = { ...client.respawnPosition };
+        player.health = 100;
+        player.walking = false;
+        player.jumping = false;
+        player.speed = 0;
+        send(client.response, { type: 'weapon-health', targetId: player.id, health: 100, respawnPosition: player.position });
+        broadcast({ type: 'state', player }, player.id);
+        response.writeHead(204);
+        return response.end();
+      }
       if (now - client.lastStateAt < 40) { response.writeHead(204); return response.end(); }
       client.lastStateAt = now;
       const appearance = data.appearance || {};
@@ -536,6 +549,7 @@ const server = createServer(async (request, response) => {
       player.walking = Boolean(data.walking) && player.speed > 0.2;
       player.jumping = Boolean(data.jumping) || player.position.y > 0.05;
       player.voiceEnabled = hasSfuConfig() ? Boolean(client.voiceReady && client.voicePublishSessionId) : Boolean(data.voiceEnabled);
+      player.glockEquipped = Boolean(data.glockEquipped);
       broadcast({ type: 'state', player }, player.id);
       response.writeHead(204);
       return response.end();
@@ -784,10 +798,90 @@ const server = createServer(async (request, response) => {
     }
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/reload') {
+    try {
+      const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id);
+      if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
+      if (client.deadUntil) return json(response, 409, { error: 'Espere voltar à praça.' });
+      const weapon = client.weapon, now = Date.now();
+      if (weapon.reloadingUntil > now) return json(response, 409, { error: 'A Glock já está recarregando.' });
+      if (weapon.mag >= 20 || weapon.reserve <= 0) return json(response, 409, { error: weapon.reserve <= 0 ? 'Sem munição reserva.' : 'O pente já está cheio.' });
+      const reloadUntil = now + 1450;
+      weapon.reloadingUntil = reloadUntil;
+      send(client.response, { type: 'weapon-state', mag: weapon.mag, reserve: weapon.reserve, reloading: true });
+      setTimeout(() => {
+        if (clients.get(id) !== client || players.get(id) !== player || weapon.reloadingUntil !== reloadUntil) return;
+        const loaded = Math.min(20 - weapon.mag, weapon.reserve);
+        weapon.mag += loaded;
+        weapon.reserve -= loaded;
+        weapon.reloadingUntil = 0;
+        send(client.response, { type: 'weapon-state', mag: weapon.mag, reserve: weapon.reserve, reloading: false });
+      }, 1450).unref();
+      response.writeHead(204);
+      return response.end();
+    } catch (error) { return json(response, error.statusCode || 400, { error: error.message || 'Não consegui recarregar.' }); }
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/combat') {
     try {
       const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id), action = String(data.action || '');
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
+      if (client.deadUntil) return json(response, 409, { error: 'Espere voltar à praça.' });
+      if (action === 'glock') {
+        const weapon = client.weapon, now = Date.now();
+        if (weapon.reloadingUntil > now) return json(response, 409, { error: 'A Glock está recarregando.' });
+        if (weapon.mag <= 0) return json(response, 409, { error: 'Pente vazio · aperte R para recarregar.' });
+        if (now - weapon.lastShotAt < 138) return json(response, 429, { error: 'A Glock é semiautomática · toque de novo.' });
+        const facing = Math.atan2(Math.sin(finite(data.facing, player.rotation)), Math.cos(finite(data.facing, player.rotation)));
+        const firstPerson = data.firstPerson === true;
+        const cameraYaw = firstPerson ? Math.atan2(Math.sin(finite(data.cameraYaw, -facing)), Math.cos(finite(data.cameraYaw, -facing))) : -facing;
+        const pitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.pitch)));
+        const supplied = data.launchOrigin;
+        let origin = null;
+        if (supplied && Number.isFinite(Number(supplied.x)) && Number.isFinite(Number(supplied.y)) && Number.isFinite(Number(supplied.z))) {
+          const candidate = { x: Number(supplied.x), y: Number(supplied.y), z: Number(supplied.z) };
+          if (Math.hypot(candidate.x - player.position.x, candidate.z - player.position.z) <= 2.2 && candidate.y - player.position.y >= .25 && candidate.y - player.position.y <= 3.1) origin = candidate;
+        }
+        const yaw = firstPerson ? cameraYaw : -facing;
+        if (!origin) origin = { x: player.position.x + Math.sin(facing) * .38, y: player.position.y + 1.06, z: player.position.z + Math.cos(facing) * .38 };
+        const burst = now - weapon.lastBurstAt < 410 ? Math.min(weapon.burst + 1, 8) : 1;
+        weapon.burst = burst;
+        weapon.lastBurstAt = now;
+        weapon.lastShotAt = now;
+        weapon.mag -= 1;
+        const spread = .0015 + burst * .0017 + (player.speed > 5.2 ? .009 : player.speed > 2 ? .0035 : 0) + (player.position.y > .16 ? .013 : 0);
+        const angle = Math.random() * Math.PI * 2, radius = Math.sqrt(Math.random()) * spread;
+        const shotYaw = yaw + Math.cos(angle) * radius;
+        const shotPitch = pitch + Math.sin(angle) * radius;
+        const direction = { x: -Math.sin(shotYaw) * Math.cos(shotPitch), y: -Math.sin(shotPitch), z: Math.cos(shotYaw) * Math.cos(shotPitch) };
+        const range = 70, end = { x: origin.x + direction.x * range, y: origin.y + direction.y * range, z: origin.z + direction.z * range };
+        let target = null, nearest = Infinity;
+        for (const candidate of players.values()) {
+          if (candidate.id === id || candidate.health <= 0 || candidate.position.y < -.2) continue;
+          const hit = playerSegmentHit(origin, end, candidate.position, .34);
+          if (hit !== null && hit < nearest) { target = candidate; nearest = hit; }
+        }
+        let hitPoint = end, headshot = false, damage = 0;
+        if (target) {
+          hitPoint = { x: origin.x + (end.x - origin.x) * nearest, y: origin.y + (end.y - origin.y) * nearest, z: origin.z + (end.z - origin.z) * nearest };
+          headshot = hitPoint.y >= target.position.y + 1.63;
+          damage = headshot ? 100 : 34;
+          target.health = Math.max(0, (target.health ?? 100) - damage);
+        }
+        player.glockEquipped = true;
+        send(client.response, { type: 'weapon-state', mag: weapon.mag, reserve: weapon.reserve, reloading: false });
+        broadcast({ type: 'glock-shot', shooterId: id, facing, firstPerson, start: origin, end: hitPoint, hit: Boolean(target), targetId: target?.id || null, headshot, time: now });
+        if (target) {
+          const impulseLength = Math.hypot(direction.x, direction.z) || 1;
+          const deadUntil = target.health <= 0 ? now + 2200 : 0;
+          const targetClient = clients.get(target.id);
+          if (targetClient && deadUntil) targetClient.deadUntil = deadUntil;
+          if (targetClient) send(targetClient.response, { type: 'weapon-health', targetId: target.id, health: target.health, deadUntil, impulse: deadUntil ? null : { x: direction.x / impulseLength * .85, z: direction.z / impulseLength * .85 } });
+          if (deadUntil) broadcast({ type: 'glock-elimination', shooterId: id, targetId: target.id, headshot, time: now });
+        }
+        response.writeHead(204);
+        return response.end();
+      }
       if (!['punch', 'snowball'].includes(action)) return json(response, 400, { error: 'Ação inválida.' });
       const now = Date.now(), cooldown = action === 'punch' ? 560 : 420;
       if (now - client.lastCombatAt < cooldown) return json(response, 429, { error: 'Espera um instante antes de atacar de novo.' });
