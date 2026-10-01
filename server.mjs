@@ -109,9 +109,9 @@ function json(response, statusCode, value) {
   response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   response.end(JSON.stringify(value));
 }
-const DEFAULT_APPEARANCE = { skin: '#f4c9a0', hair: '#e2ddce', hairAccent: '#f1e9df', facialHair: '#4a3028', shirt: '#8294b0', pants: '#25242b', shoe: '#414d69', eyeLeft: '#596881', eyeRight: '#8a4c59', gender: 'feminine', hairStyle: 'long', hairFall: 'open', beardStyle: 'none', key: true, hood: false };
+const DEFAULT_APPEARANCE = { skin: '#f4c9a0', hair: '#e2ddce', hairAccent: '#f1e9df', facialHair: '#4a3028', shirt: '#8294b0', pants: '#25242b', shoe: '#414d69', shoeAccent: '#ba2744', eyeLeft: '#596881', eyeRight: '#8a4c59', gender: 'feminine', hairStyle: 'long', hairFall: 'open', beardStyle: 'none', headwear: 'none', shoeStyle: 'classic', key: true, hood: false };
 const ALLOWED_GENDERS = new Set(['masculine', 'feminine']);
-const ALLOWED_HAIR_STYLES = new Set(['short', 'fringe', 'medium', 'long', 'longBack', 'curly', 'curlyVolume', 'auburnBob', 'dreads', 'shaggy']);
+const ALLOWED_HAIR_STYLES = new Set(['short', 'fringe', 'medium', 'long', 'longBack', 'curly', 'curlyVolume', 'auburnBob', 'dreads', 'shaggy', 'fade', 'lowBlack', 'braids']);
 const ALLOWED_BEARDS = new Set(['none', 'goatee', 'mustache', 'full', 'mustacheGoatee']);
 function cleanAppearance(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) value = {};
@@ -119,12 +119,14 @@ function cleanAppearance(value = {}) {
     skin: cleanColor(value.skin, DEFAULT_APPEARANCE.skin), hair: cleanColor(value.hair, DEFAULT_APPEARANCE.hair),
     hairAccent: cleanColor(value.hairAccent, DEFAULT_APPEARANCE.hairAccent), facialHair: cleanColor(value.facialHair, DEFAULT_APPEARANCE.facialHair),
     shirt: cleanColor(value.shirt, DEFAULT_APPEARANCE.shirt), pants: cleanColor(value.pants, DEFAULT_APPEARANCE.pants), shoe: cleanColor(value.shoe, DEFAULT_APPEARANCE.shoe),
+    shoeAccent: cleanColor(value.shoeAccent, DEFAULT_APPEARANCE.shoeAccent),
     eyeLeft: cleanColor(value.eyeLeft, DEFAULT_APPEARANCE.eyeLeft), eyeRight: cleanColor(value.eyeRight, DEFAULT_APPEARANCE.eyeRight),
     gender: ALLOWED_GENDERS.has(value.gender) ? value.gender : DEFAULT_APPEARANCE.gender,
     hairStyle: ALLOWED_HAIR_STYLES.has(value.hairStyle) ? value.hairStyle : DEFAULT_APPEARANCE.hairStyle,
     hairFall: value.hairFall === 'overEyes' ? 'overEyes' : 'open',
     beardStyle: ALLOWED_BEARDS.has(value.beardStyle) ? value.beardStyle : 'none',
-    key: typeof value.key === 'boolean' ? value.key : DEFAULT_APPEARANCE.key, hood: typeof value.hood === 'boolean' ? value.hood : DEFAULT_APPEARANCE.hood,
+    headwear: value.headwear === 'nyCap' ? 'nyCap' : 'none', shoeStyle: value.shoeStyle === 'jordan' ? 'jordan' : 'classic',
+    key: typeof value.key === 'boolean' ? value.key : DEFAULT_APPEARANCE.key, hood: value.headwear !== 'nyCap' && (typeof value.hood === 'boolean' ? value.hood : DEFAULT_APPEARANCE.hood),
   };
 }
 function cleanProfile(value = {}, fallbackName = 'JOGADOR') {
