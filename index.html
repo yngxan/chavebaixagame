@@ -1,5 +1,5 @@
-Warning: truncated output (original token count: 50623)
-Total output lines: 1121
+Warning: truncated output (original token count: 50677)
+Total output lines: 1122
 
 <!doctype html>
 <html lang="pt-BR">
@@ -248,7 +248,7 @@ Total output lines: 1121
   toggle.addEventListener('click',()=>{mode=mode==='login'?'register':'login';const registering=mode==='register';document.getElementById('accountTitle').textContent=registering?'CRIAR CONTA':'ENTRA NA PRAÇA';submit.textContent=registering?'CRIAR CONTA':'ENTRAR';password.autocomplete=registering?'new-password':'current-password';toggle.textContent=registering?'Já tem conta? Entrar':'Ainda não tem conta? Criar uma';message.textContent='';});
   form.addEventListener('submit',async event=>{
     event.preventDefault();event.stopImmediatePropagation();message.textContent='';submit.disabled=true;form.setAttribute('aria-busy','true');
-    try{const response=await fetch(mode==='register'?'/api/auth/register':'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:document.getElementById('accountUsername').value,password:password.value})}),result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Não consegui entrar agora.');password.value='';message.style.color='#d4ff00';message.textContent='Tudo certo! Abrindo a praça…';location.reload();}
+    try{const response=await fetch(mode==='register'?'/api/auth/register':'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:document.getElementById('accountUsername').value,password:password.value})}),result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||'Não consegui entrar agora.');if(typeof window.lowkeyActivateAccount!=='function')throw new Error('A praça ainda está carregando. Atualize a página e tente novamente.');password.value='';message.style.color='#d4ff00';message.textContent='Tudo certo! Abrindo a praça…';window.lowkeyActivateAccount(result.user);}
     catch(error){message.style.color='';message.textContent=error.message||'Conexão indisponível. Confira a internet e tente de novo.';submit.disabled=false;form.removeAttribute('aria-busy');}
   });
 })();
@@ -361,8 +361,7 @@ Total output lines: 1121
   // Cubic trees around the open area.
   function tree(x,z,size=1){const g=new THREE.Group();g.position.set(x,0,z);scene.add(g);solidObstacles.push({type:'localbox',x,z,hx:.41*size,hz:.41*size});box(g,0,1.55*size,0,.82*size,3.1*size,.82*size,mats.bark);box(g,-.27*size,1.2*size,.43*size,.22*size,1.1*size,.08*size,mats.bark2,{cast:false});
     const levels=[{y:3.2,s:2.2,m:mats.leaf},{y:4.25,s:1.8,m:mats.leaf2},{y:5.15,s:1.24,m:mats.leaf3}];for(const l of levels){box(g,0,l.y*size,0,l.s*size,.95*size,l.s*size,l.m);box(g,.75*size,(l.y-.14)*size,.3*size,.78*size,.72*size,.8*size,l.m);box(g,-.7*size,(l.y+.16)*size,-.2*size,.84*size,.72*size,.82*size,l.m);}return g;}
-  const trees=[[-18,-19,1.5],[-9,-25,1.25],[10,-25,1.35],[21,-18,1.55],[-24,-7,1.4],[24,-3,1.3],[-22,12,1.35],[22,15,1.45],[-13,24,1.45],[1,27,1.3],[14,23,1.55],[-29,4,1.3],[30,9,1.3]];trees.forEach(t=>tree(...t));
-  // Little flow…20623 tokens truncated…dio.pause();subscription.audio.srcObject=null;subscription.audio.remove();subscription.audio=null;}if(subscription)sfuSubscribers.delete(id);}
+  const trees=[[-18,-19,1.5],[-9,-25,1.25],[10,-25,1.35],[21,-18,…20677 tokens truncated…bscription.audio.remove();subscription.audio=null;}if(subscription)sfuSubscribers.delete(id);}
   function closeSfuSubscription(id,notify=true){const subscription=sfuSubscribers.get(id);if(!subscription)return;removeSfuAudio(id,subscription);if(notify&&localId)void postSfu('/api/voice/sfu/unsubscribe',{id:localId,to:id,sessionId:subscription.sessionId}).catch(()=>{});updateVoiceButton();}
   function resetSfuReceiver(notify=true,retryDelay=1200){const receiver=sfuReceiver;if(!receiver)return;sfuReceiver=null;clearTimeout(receiver.disconnectTimer);for(const [id,subscription] of [...sfuSubscribers])removeSfuAudio(id,subscription);receiver.pc.ontrack=null;receiver.pc.onconnectionstatechange=null;receiver.pc.close();if(notify&&localId)void postSfu('/api/voice/sfu/stop-listening',{id:localId,sessionId:receiver.sessionId}).catch(()=>{});if(retryDelay)sfuReceiverRetryAt=Date.now()+retryDelay;updateVoiceButton();}
 function updateSfuSpatialAudio(){for(const [id,subscription] of sfuSubscribers){const audio=subscription.audio;if(!audio)continue;const distance=voiceDistance(id),inRange=distance<=VOICE_RADIUS;audio.volume=inRange?window.lowkeyAudioGain('voice')*Math.max(0,Math.min(1,1-distance/VOICE_RADIUS)):0;audio.muted=!inRange||!voicePlaybackUnlocked;if(inRange&&voicePlaybackUnlocked&&audio.paused&&!subscription.playAttempted&&!subscription.playBlocked){subscription.playAttempted=true;audio.play().catch(()=>{subscription.playAttempted=false;subscription.playBlocked=true;showToast('TOQUE NA TELA PARA LIBERAR O ÁUDIO');});}}}
@@ -450,6 +449,7 @@ function updateSfuSpatialAudio(){for(const [id,subscription] of sfuSubscribers){
     document.getElementById('nameInput').value=choice.name;document.getElementById('keyToggle').classList.toggle('on',choice.key);document.getElementById('hoodToggle').classList.toggle('on',choice.hood);rebuildAvatar();
   }
   function activateAccount(user){authenticatedUser=user;applyAccountProfile(user.profile||{});document.getElementById('accountScreen').classList.add('hidden');document.getElementById('logoutButton').hidden=false;document.getElementById('logoutButton').title=`Sair de @${user.username}`;connectRoom();}
+  window.lowkeyActivateAccount=activateAccount;
   const editorPanel=document.getElementById('avatarEditor'),chatPanel=document.getElementById('proximityChat'),chatBadge=document.getElementById('chatBadge'),mobileChatButton=document.getElementById('mobileChatToggle');let chatUnread=0;
   let portraitEditorPreview=false,portraitEditorPreviousDistance=7.2;
   function setEditorOpen(open){const wantsPreview=open&&window.matchMedia('(max-width:760px) and (orientation:portrait)').matches;if(wantsPreview&&!portraitEditorPreview){portraitEditorPreviousDistance=distance;distance=5.2;}else if(!open&&portraitEditorPreview){distance=portraitEditorPreviousDistance;}portraitEditorPreview=wantsPreview;editorPanel.classList.toggle('open',open);document.getElementById('editorToggle').setAttribute('aria-expanded',String(open));if(open)setChatOpen(false);}
