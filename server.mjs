@@ -184,8 +184,8 @@ if (database) {
 } else {
   try { stageMedia = { ...stageMedia, ...JSON.parse(await readFile(STAGE_FILE, 'utf8')) }; } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
-// Resume the saved playback mode without consuming the queue while the server was offline.
-stageMedia.updatedAt = Date.now();
+// Keep the server timeline across disconnects and deployments; late joiners use this timestamp.
+if (!stageMedia.playing) stageMedia.updatedAt = Date.now();
 function stageSnapshot(accountId) { const { queue, ...state } = stageMedia; return { ...state, queueCount: queue.length, ...(accountId === administratorAccountId ? { queue } : {}), serverTime: Date.now() }; }
 function broadcastStage() { for (const client of clients.values()) send(client.response, { type: 'stage-media', stageMedia: stageSnapshot(client.accountId) }); }
 async function persistStage(state) {
