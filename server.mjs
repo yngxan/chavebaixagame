@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const INFINITE_GLOCK_AMMO = true;
 const PORT = Number(process.env.PORT || 4173);
 const MAX_PLAYERS = 32;
 const CHAT_RADIUS = 12;
@@ -807,6 +808,7 @@ const server = createServer(async (request, response) => {
       if (client.deadUntil) return json(response, 409, { error: 'Espere voltar à praça.' });
       const weapon = client.weapon, now = Date.now();
       if (weapon.reloadingUntil > now) return json(response, 409, { error: 'A Glock já está recarregando.' });
+      if (INFINITE_GLOCK_AMMO) { send(client.response, { type: 'weapon-state', mag: 20, reserve: 120, reloading: false }); response.writeHead(204); return response.end(); }
       if (weapon.mag >= 20 || weapon.reserve <= 0) return json(response, 409, { error: weapon.reserve <= 0 ? 'Sem munição reserva.' : 'O pente já está cheio.' });
       const reloadUntil = now + 1450;
       weapon.reloadingUntil = reloadUntil;
@@ -817,7 +819,7 @@ const server = createServer(async (request, response) => {
         weapon.mag += loaded;
         weapon.reserve -= loaded;
         weapon.reloadingUntil = 0;
-        send(client.response, { type: 'weapon-state', mag: weapon.mag, reserve: weapon.reserve, reloading: false });
+        send(client.response, { type: 'weapon-state', mag: INFINITE_GLOCK_AMMO ? 20 : weapon.mag, reserve: INFINITE_GLOCK_AMMO ? 120 : weapon.reserve, reloading: false });
       }, 1450).unref();
       response.writeHead(204);
       return response.end();
@@ -832,7 +834,7 @@ const server = createServer(async (request, response) => {
       if (action === 'glock') {
         const weapon = client.weapon, now = Date.now();
         if (weapon.reloadingUntil > now) return json(response, 409, { error: 'A Glock está recarregando.' });
-        if (weapon.mag <= 0) return json(response, 409, { error: 'Pente vazio · aperte R para recarregar.' });
+        if (!INFINITE_GLOCK_AMMO && weapon.mag <= 0) return json(response, 409, { error: 'Pente vazio · aperte R para recarregar.' });
         if (now - weapon.lastShotAt < 138) return json(response, 429, { error: 'A Glock é semiautomática · toque de novo.' });
         const facing = Math.atan2(Math.sin(finite(data.facing, player.rotation)), Math.cos(finite(data.facing, player.rotation)));
         const firstPerson = data.firstPerson === true;
@@ -857,7 +859,7 @@ const server = createServer(async (request, response) => {
         weapon.burst = burst;
         weapon.lastBurstAt = now;
         weapon.lastShotAt = now;
-        weapon.mag -= 1;
+        if (!INFINITE_GLOCK_AMMO) weapon.mag -= 1;
         const spread = (.0015 + burst * .0017 + (player.speed > 5.2 ? .009 : player.speed > 2 ? .0035 : 0) + (player.position.y > .16 ? .013 : 0)) * (data.aiming === true ? .72 : 1);
         const angle = Math.random() * Math.PI * 2, radius = Math.sqrt(Math.random()) * spread;
         const shotYaw = yaw + Math.cos(angle) * radius;
