@@ -159,6 +159,50 @@
 </style>
 <style>#accountScreen{overflow:auto}.account-card{max-height:calc(100dvh - 36px);overflow:auto}.logout-button[hidden]{display:none}@media(max-height:500px){.account-card{padding:18px}.account-card h1{font-size:26px}.account-card p{margin-bottom:12px}.account-field{margin-bottom:9px}}@media(max-width:760px) and (orientation:portrait){.editor.open{inset:0;padding:calc(46dvh + 12px) 12px max(16px,env(safe-area-inset-bottom));max-height:none;border:0;border-radius:0;overflow-x:hidden;overflow-y:auto;background:linear-gradient(to bottom,transparent 0,rgba(8,14,11,.10) 32dvh,rgba(8,14,11,.94) 43dvh,rgba(8,14,11,.98) 50dvh);backdrop-filter:none;box-shadow:none}.editor.open:before{content:'PRÉVIA AO VIVO · ARRASTE PARA GIRAR';position:fixed;z-index:6;inset:0 0 auto;height:45dvh;display:flex;align-items:flex-end;justify-content:center;padding-bottom:12px;color:#d6ff36;font-size:9px;font-weight:800;letter-spacing:1.4px;text-shadow:0 2px 8px #000;pointer-events:none}.editor.open .editor-title-row{margin-bottom:4px}.editor.open>p{margin-bottom:8px}.editor.open .field{margin-bottom:8px}.editor.open .world-note{margin-bottom:8px}}
 </style>
+<style>
+/* Mobile combat HUD: movement on the left, clear primary action cluster on the right. */
+@media(max-width:760px),(pointer:coarse){
+  .weapon-hud{left:12px;bottom:calc(132px + env(safe-area-inset-bottom));transform:none;padding:7px 10px;border-radius:10px;background:rgba(9,16,14,.88);font-size:9px;letter-spacing:.7px}
+  .weapon-hud strong{font-size:12px}
+  .weapon-hud .health{margin-left:7px;padding-left:7px}
+  .combat-bar{display:grid;grid-template-columns:48px 60px;grid-template-rows:48px 60px;gap:7px;right:calc(14px + env(safe-area-inset-right));bottom:calc(88px + env(safe-area-inset-bottom));padding:7px;border:1px solid rgba(212,255,0,.22);border-radius:18px;background:rgba(9,16,14,.64);box-shadow:0 8px 26px rgba(0,0,0,.28);backdrop-filter:blur(10px);z-index:5}
+  .combat-button{width:48px;height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;border-radius:16px;font-size:20px;line-height:1;background:rgba(10,17,14,.94);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+  .combat-button:after{font-size:6px;font-weight:900;letter-spacing:.65px;color:rgba(243,245,233,.7)}
+  .combat-button[data-combat="weapon"]{grid-column:1;grid-row:1}
+  .combat-button[data-combat="weapon"]:after{content:'ARMA'}
+  .combat-button[data-combat="aim"]{grid-column:2;grid-row:1}
+  .combat-button[data-combat="aim"]:after{content:'MIRAR'}
+  .combat-button[data-combat="snowball"]{grid-column:1;grid-row:2}
+  .combat-button[data-combat="snowball"]:after{content:'NEVE'}
+  .combat-button[data-combat="attack"]{grid-column:2;grid-row:2;width:60px;height:60px;border-radius:50%;border:2px solid rgba(212,255,0,.9);background:radial-gradient(circle at 35% 25%,#dfff5b,#92b900 72%,#607c00);color:#10150c;font-size:25px;box-shadow:0 0 0 5px rgba(212,255,0,.12),0 8px 18px rgba(0,0,0,.32)}
+  .combat-button[data-combat="attack"]:after{content:'ATACAR';color:#152000}
+  .combat-button[data-combat="aim"].equipped{background:rgba(212,255,0,.17);color:var(--acid)}
+  .touch-jump{right:calc(14px + env(safe-area-inset-right));bottom:calc(226px + env(safe-area-inset-bottom));width:50px;height:50px;border:1px solid rgba(212,255,0,.65);background:rgba(9,16,14,.9);box-shadow:0 5px 16px rgba(0,0,0,.28)}
+  .chat-launch{left:10px;top:58px;width:40px;height:40px}
+  .touch-emotes{left:58px;right:auto;top:58px;bottom:auto;width:40px;height:40px}
+  .touch-camera{right:calc(10px + env(safe-area-inset-right));top:58px;bottom:auto;width:40px;height:40px}
+  .talk-btn{right:calc(58px + env(safe-area-inset-right));top:58px;bottom:auto;max-width:132px;min-height:40px}
+  .emote-bar{left:10px;right:auto;top:108px;bottom:auto;transform:none;gap:5px;padding:6px;border:1px solid rgba(212,255,0,.22);border-radius:14px;background:rgba(9,16,14,.94);box-shadow:0 8px 26px rgba(0,0,0,.3)}
+  .chat{left:10px;top:108px;bottom:auto;width:min(310px,calc(100vw - 20px));max-height:42dvh}
+}
+@media(max-width:420px),(pointer:coarse) and (max-width:420px){
+  .combat-bar{grid-template-columns:44px 56px;grid-template-rows:44px 56px;gap:6px;right:calc(10px + env(safe-area-inset-right));bottom:calc(82px + env(safe-area-inset-bottom));padding:6px}
+  .combat-button{width:44px;height:44px;border-radius:14px;font-size:18px}
+  .combat-button[data-combat="attack"]{width:56px;height:56px;font-size:23px}
+  .touch-jump{right:calc(10px + env(safe-area-inset-right));bottom:calc(208px + env(safe-area-inset-bottom));width:46px;height:46px}
+  .weapon-hud{left:8px;bottom:calc(122px + env(safe-area-inset-bottom));padding:6px 8px;font-size:8px}
+  .weapon-hud strong{font-size:11px}
+  .talk-btn{max-width:124px}
+}
+@media(orientation:landscape) and (pointer:coarse){
+  .combat-bar{grid-template-columns:42px 52px;grid-template-rows:42px 52px;gap:5px;right:calc(12px + env(safe-area-inset-right));bottom:calc(10px + env(safe-area-inset-bottom));padding:6px;border-radius:16px}
+  .combat-button{width:42px;height:42px;border-radius:14px;font-size:18px}
+  .combat-button[data-combat="attack"]{width:52px;height:52px;font-size:22px}
+  .touch-jump{right:calc(126px + env(safe-area-inset-right));bottom:calc(12px + env(safe-area-inset-bottom));width:46px;height:46px}
+  .weapon-hud{left:12px;bottom:calc(102px + env(safe-area-inset-bottom))}
+  .emote-bar{left:50%;right:auto;top:106px;bottom:auto;transform:translateX(-50%)}
+}
+</style>
 </head>
 <body>
 <div id="game"></div>
@@ -951,7 +995,7 @@ function updateSfuSpatialAudio(){for(const [id,subscription] of sfuSubscribers){
   const editorPanel=document.getElementById('avatarEditor'),chatPanel=document.getElementById('proximityChat'),chatBadge=document.getElementById('chatBadge'),mobileChatButton=document.getElementById('mobileChatToggle');let chatUnread=0;
   let portraitEditorPreview=false,portraitEditorPreviousDistance=7.2;
   function setEditorOpen(open){const wantsPreview=open&&window.matchMedia('(max-width:760px) and (orientation:portrait)').matches;if(wantsPreview&&!portraitEditorPreview){portraitEditorPreviousDistance=distance;distance=5.2;}else if(!open&&portraitEditorPreview){distance=portraitEditorPreviousDistance;}portraitEditorPreview=wantsPreview;editorPanel.classList.toggle('open',open);document.getElementById('editorToggle').setAttribute('aria-expanded',String(open));if(open)setChatOpen(false);}
-  function setChatOpen(open){chatPanel.classList.toggle('open',open);document.getElementById('desktopChatToggle').setAttribute('aria-expanded',String(open));mobileChatButton.setAttribute('aria-expanded',String(open));if(open){editorPanel.classList.remove('open');document.getElementById('editorToggle').setAttribute('aria-expanded','false');chatUnread=0;chatBadge.hidden=true;chatBadge.textContent='0';}}
+   function setChatOpen(open){chatPanel.classList.toggle('open',open);document.getElementById('desktopChatToggle').setAttribute('aria-expanded',String(open));mobileChatButton.setAttribute('aria-expanded',String(open));if(open){setMobileEmotes(false);editorPanel.classList.remove('open');document.getElementById('editorToggle').setAttribute('aria-expanded','false');chatUnread=0;chatBadge.hidden=true;chatBadge.textContent='0';}}
   let avatarPreviewDrag=null;editorPanel.addEventListener('pointerdown',event=>{if(!portraitEditorPreview||event.clientY>innerHeight*.45)return;avatarPreviewDrag={id:event.pointerId,x:event.clientX,y:event.clientY};editorPanel.setPointerCapture?.(event.pointerId);event.preventDefault();});editorPanel.addEventListener('pointermove',event=>{if(!avatarPreviewDrag||event.pointerId!==avatarPreviewDrag.id)return;yaw-=(event.clientX-avatarPreviewDrag.x)*.009;pitch=clampCameraPitch(pitch+(event.clientY-avatarPreviewDrag.y)*.006);avatarPreviewDrag.x=event.clientX;avatarPreviewDrag.y=event.clientY;});const stopAvatarPreviewDrag=event=>{if(avatarPreviewDrag?.id===event.pointerId)avatarPreviewDrag=null;};editorPanel.addEventListener('pointerup',stopAvatarPreviewDrag);editorPanel.addEventListener('pointercancel',stopAvatarPreviewDrag);
   document.getElementById('editorToggle').addEventListener('click',()=>setEditorOpen(!editorPanel.classList.contains('open')));document.getElementById('closeEditor').addEventListener('click',()=>setEditorOpen(false));
   document.getElementById('desktopChatToggle').addEventListener('click',()=>setChatOpen(!chatPanel.classList.contains('open')));mobileChatButton.addEventListener('click',()=>setChatOpen(!chatPanel.classList.contains('open')));document.getElementById('closeChat').addEventListener('click',()=>setChatOpen(false));
@@ -964,7 +1008,7 @@ function updateSfuSpatialAudio(){for(const [id,subscription] of sfuSubscribers){
   const touchCamera=document.getElementById('touchCamera'),touchCameraLabel=document.getElementById('touchCameraLabel'),touchEmotes=document.getElementById('touchEmotes'),emoteBar=document.getElementById('emoteBar');let lastThirdPersonDistance=7.2;
   touchCamera.addEventListener('click',()=>{if(distance<.8)distance=lastThirdPersonDistance;else{lastThirdPersonDistance=distance;distance=.28;}});
   function setMobileEmotes(open){emoteBar.classList.toggle('mobile-open',open);touchEmotes.setAttribute('aria-expanded',String(open));touchEmotes.setAttribute('aria-label',open?'Fechar emotes':'Abrir emotes');}
-  touchEmotes.addEventListener('click',()=>setMobileEmotes(!emoteBar.classList.contains('mobile-open')));
+   touchEmotes.addEventListener('click',()=>{const open=!emoteBar.classList.contains('mobile-open');if(open)setChatOpen(false);setMobileEmotes(open);});
   document.addEventListener('pointerdown',event=>{if(!event.target.closest('#emoteBar,#touchEmotes'))setMobileEmotes(false);});
   renderer.domElement.addEventListener('click',()=>{renderer.domElement.focus();if(!isTouchDevice&&document.pointerLockElement!==renderer.domElement&&renderer.domElement.requestPointerLock)renderer.domElement.requestPointerLock();});
   const startScreen=document.getElementById('startScreen');if(isTouchDevice){document.querySelector('.start-card p').textContent='Use o analógico esquerdo para andar e arraste qualquer área livre para olhar. Toque na seta para pular.';document.querySelector('.start-foot').textContent='Analógico esquerdo · arraste para olhar · seta para pular';document.getElementById('startButton').textContent='ENTRAR NA PRAÇA';}document.getElementById('startButton').addEventListener('click',()=>{startScreen.classList.add('hidden');renderer.domElement.focus();if(!isTouchDevice&&renderer.domElement.requestPointerLock)renderer.domElement.requestPointerLock();else if(!isTouchDevice)showToast('ESTE NAVEGADOR NÃO SUPORTA MODO MOUSE');});
