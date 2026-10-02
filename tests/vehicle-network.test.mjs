@@ -41,7 +41,7 @@ test('vehicles are shared, proximity-checked, server-driven and freed on disconn
   try{
     let ready=false;child.stdout.on('data',chunk=>{if(String(chunk).includes('multiplayer pronta'))ready=true;});await waitFor(()=>ready);
     const owner=await connect('vehicle_owner'),observer=await connect('vehicle_observer'),thief=await connect('vehicle_hijacker');
-    const initial=await waitFor(()=>latest(owner));assert.equal(initial.vehicles.length,2);assert.equal(initial.segmentMs,900000);
+    const initial=await waitFor(()=>latest(owner));assert.equal(initial.vehicles.length,4);assert.equal(initial.segmentMs,900000);
     const carId='plaza-car',motoId='plaza-moto';
     assert.equal((await post(owner.cookie,'/api/vehicle',{id:owner.id,action:'enter',vehicleId:carId})).status,403);
     await walk(owner,{x:-12,z:5});

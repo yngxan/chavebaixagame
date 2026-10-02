@@ -1,16 +1,22 @@
 (() => {
   function create({THREE,scene,box,mats}) {
     const models=new Map(),rubber=new THREE.MeshStandardMaterial({color:0x16191d,roughness:.95}),chrome=new THREE.MeshStandardMaterial({color:0xb9c3ce,metalness:.7,roughness:.3});
-    const glass=new THREE.MeshStandardMaterial({color:0x8ab9cc,transparent:true,opacity:.42,roughness:.12,metalness:.15,depthWrite:false});
+    const glass=new THREE.MeshStandardMaterial({color:0x152129,roughness:.18,metalness:.35});
     const trim=new THREE.MeshStandardMaterial({color:0x252b33,roughness:.55,metalness:.25}),seatMaterial=new THREE.MeshStandardMaterial({color:0x343d49,roughness:.9});
     const rearLamp=new THREE.MeshStandardMaterial({color:0xe83c40,emissive:0xbd1724,emissiveIntensity:.55,roughness:.3});
     const lamp=new THREE.MeshStandardMaterial({color:0xffe9bc,emissive:0xffdba0,emissiveIntensity:1});
-    for(const state of LowkeyWorld.initialVehicles()) {
+    function addModel(state) {
       const group=new THREE.Group(),wheels=[],frontWheels=[];scene.add(group);let doorPivot=null;
-      const paint=new THREE.MeshStandardMaterial({color:state.kind==='car'?0x236fa7:0xbf343d,roughness:.4,metalness:.3});
+      const paint=new THREE.MeshStandardMaterial({color:state.color||(state.kind==='car'?'#a7cd24':'#5067ed'),roughness:.36,metalness:.32});
+      function panel(x,y,z,width,height,depth,topWidth,topDepth,mat=paint){
+        const geometry=new THREE.BoxGeometry(width,height,depth),positions=geometry.attributes.position;
+        for(let i=0;i<positions.count;i++)if(positions.getY(i)>0){positions.setX(i,positions.getX(i)*topWidth/width);positions.setZ(i,positions.getZ(i)*topDepth/depth);}
+        geometry.userData.vehicleOwned=true;geometry.computeVertexNormals();const mesh=new THREE.Mesh(geometry,mat);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;group.add(mesh);return mesh;
+      }
       function wheel(x,z,radius,width,front){const root=new THREE.Group();root.position.set(x,radius,z);group.add(root);const mesh=new THREE.Mesh(new THREE.CylinderGeometry(radius,radius,width,16),rubber);mesh.rotation.z=Math.PI/2;mesh.castShadow=true;root.add(mesh);const hub=new THREE.Mesh(new THREE.CylinderGeometry(radius*.67,radius*.67,width+.018,12),trim);hub.rotation.z=Math.PI/2;root.add(hub);for(const side of [-1,1]){for(let i=0;i<5;i++){const spoke=box(root,side*(width/2+.014),0,0,.018,radius*1.16,.055,chrome,{cast:false});spoke.rotation.x=i*Math.PI/5;}box(root,side*(width/2+.022),0,0,.026,.10,.10,chrome,{cast:false});}wheels.push(root);if(front)frontWheels.push(root);}
       if(state.kind==='car') {
-        box(group,0,.48,0,1.8,.20,3.4,trim);box(group,0,.73,0,1.78,.38,3.45,paint);
+        box(group,0,.48,0,1.8,.20,3.4,trim);panel(0,.73,0,1.78,.38,3.45,1.68,3.3);
+        panel(0,1.29,-.22,1.58,.62,1.85,1.40,1.28,glass);
         box(group,0,1.62,-.22,1.48,.10,1.36,paint);
         const windshield=box(group,0,1.29,.56,1.4,.57,.035,glass,{cast:false});windshield.rotation.x=-.32;
         const rearWindow=box(group,0,1.29,-1.02,1.4,.55,.035,glass,{cast:false});rearWindow.rotation.x=.3;
@@ -24,7 +30,7 @@
           box(group,x*1.27,1.14,.5,.22,.12,.20,paint);
           box(group,x*1.4,1.14,.49,.025,.09,.15,glass,{cast:false});
         }
-        const hood=box(group,0,.97,1.14,1.7,.12,1.00,paint);hood.rotation.x=.05;
+        const hood=panel(0,.96,1.14,1.7,.15,1.00,1.57,.90);hood.rotation.x=.08;
         box(group,0,.91,-1.42,1.72,.15,.58,paint);
         for(const x of [-.49,.49])box(group,x,.99,1.12,.04,.012,.83,trim,{cast:false});
         for(const x of [-.91,.91])for(const z of [-1.14,1.14])wheel(x,z,.41,.28,z>0);
@@ -40,6 +46,10 @@
         wheel(0,-.85,.36,.16,false);wheel(0,.9,.36,.16,true);
         box(group,0,.56,-.04,.22,.16,1.65,trim);
         const tank=box(group,0,.89,.21,.45,.30,.62,paint);tank.rotation.x=.12;
+        panel(0,.66,.33,.59,.60,.98,.47,.72);
+        const nose=panel(0,1.02,.72,.53,.39,.52,.40,.34);nose.rotation.x=-.20;
+        const screen=panel(0,1.30,.65,.35,.32,.055,.27,.045,glass);screen.rotation.x=-.34;
+        for(const x of [-.30,.30]){const fairing=box(group,x,.67,.25,.045,.34,.51,paint);fairing.rotation.z=x<0?-.12:.12;box(group,x*1.02,.72,.40,.025,.09,.24,trim);}
         box(group,0,1.05,.18,.18,.022,.13,chrome,{cast:false});
         const engine=new THREE.Mesh(new THREE.CylinderGeometry(.20,.21,.27,8),chrome);engine.position.set(0,.5,.04);engine.rotation.z=Math.PI/2;group.add(engine);
         for(const y of [.42,.48,.54,.60])box(group,0,y,.09,.40,.025,.31,trim,{cast:false});
@@ -56,18 +66,23 @@
       }
       const headlight=new THREE.PointLight(0xffdfa5,0,10,2);headlight.position.set(0,.90,state.kind==='car'?2:1.2);group.add(headlight);
       group.position.set(state.x,state.y,state.z);group.rotation.y=state.rotation;
-      models.set(state.id,{group,wheels,frontWheels,headlight,doorPivot,state:{...state},motion:new LowkeyMotion.MotionBuffer(),predicted:{...state},driverRevision:0,wheelAngle:0});
+      models.set(state.id,{group,wheels,frontWheels,headlight,doorPivot,paint,state:{...state},motion:new LowkeyMotion.MotionBuffer(),predicted:{...state},driverRevision:0,wheelAngle:0});
     }
+    for(const state of LowkeyWorld.initialVehicles())addModel(state);
     function receive(world,arrival,serverNow) {
+      const current=new Set((world.vehicles||[]).map(v=>v.id));
+      for(const [id,model] of models)if(!current.has(id)){scene.remove(model.group);const geos=new Set();model.group.traverse(o=>{if(o.geometry&&(o.geometry.type!=='BoxGeometry'||o.geometry.userData.vehicleOwned))geos.add(o.geometry);});for(const g of geos)g.dispose();model.paint.dispose();model.headlight.dispose();models.delete(id);}
       for(const state of world.vehicles||[]) {
-        const model=models.get(state.id);if(!model)continue;
+        if(!models.has(state.id))addModel(state);const model=models.get(state.id);
         if(model.state.driverId!==state.driverId)model.driverRevision++;
         model.state={...state};model.authoritativeAt=world.serverTime;
+        model.paint.color.set(state.color||(state.kind==='car'?'#a7cd24':'#5067ed'));
         model.motion.push({x:state.x,y:state.y,z:state.z,rotation:state.rotation,motionTime:world.serverTime,motionReset:model.driverRevision,walking:Math.abs(state.speed)>.05,speed:Math.abs(state.speed)},arrival);
         model.pending={...state};model.pendingAge=Math.min(.2,Math.max(0,(serverNow-world.serverTime)/1000));
       }
     }
-    function update(dt,now,serverNow,localId,input,night) {
+    function update(dt,now,serverNow,localId,input,night,localPosition) {
+      const focus=localPosition||active(localId)?.group.position||new THREE.Vector3(),lit=new Set([...models.values()].filter(m=>m.group.position.distanceTo(focus)<28).sort((a,b)=>a.group.position.distanceToSquared(focus)-b.group.position.distanceToSquared(focus)).slice(0,4).map(m=>m.state.id));
       for(const model of models.values()) {
         const owned=localId&&model.state.driverId===localId;
         const obstacles=LowkeyWorld.vehicleObstacles(model.state,[...models.values()].map(other=>({...other.state,x:other.group.position.x,z:other.group.position.z}))),controls=model.state.wrecked||model.state.hijacking?{throttle:0,steer:0,brake:true}:input;
@@ -81,7 +96,7 @@
             model.predicted.speed=expected.speed;model.predicted.steering=expected.steering;model.predicted.wheelieAngle=expected.wheelieAngle;model.pending=null;
           }
           LowkeyWorld.advanceVehicle(model.predicted,controls,dt,obstacles);
-          if(model.correction){const blend=1-Math.exp(-10*dt),x=model.predicted.x+model.correction.x*blend,z=model.predicted.z+model.correction.z*blend;if(LowkeyWorld.clearAt(x,z,model.state.kind==='car'?1.05:.46,obstacles)){for(const axis of ['x','z','rotation']){const delta=model.correction[axis]*blend;model.predicted[axis]+=delta;model.correction[axis]-=delta;}}else model.correction=null;}
+          if(model.correction){const blend=1-Math.exp(-10*dt),x=model.predicted.x+model.correction.x*blend,z=model.predicted.z+model.correction.z*blend;if(LowkeyWorld.vehicleClearAt(model.predicted,x,z,model.predicted.rotation+model.correction.rotation*blend,obstacles)){for(const axis of ['x','z','rotation']){const delta=model.correction[axis]*blend;model.predicted[axis]+=delta;model.correction[axis]-=delta;}}else model.correction=null;}
           pose=model.predicted;
         } else {pose=model.motion.sample(now,dt)||model.state;model.pending=null;}
         model.wheelieAngle=THREE.MathUtils.damp(model.wheelieAngle||0,(owned?model.predicted.wheelieAngle:model.state.wheelieAngle)||0,18,dt);
@@ -92,7 +107,7 @@
         if(model.doorPivot){const progress=model.state.hijacking?Math.max(0,Math.min(1,(serverNow-model.state.hijacking.startedAt)/LowkeyWorld.HIJACK_MS)):0,open=model.state.wrecked?.35:model.state.hijacking?Math.min(1,progress/.28)*Math.min(1,(1-progress)/.12)*1.05:0;model.doorPivot.rotation.y=THREE.MathUtils.damp(model.doorPivot.rotation.y,-open,18,dt);model.group.rotation.x=THREE.MathUtils.damp(model.group.rotation.x,model.state.wrecked?.08:0,5,dt);}
         model.wheelAngle+=speed*dt/(model.state.kind==='car'?.41:.36);
         for(const wheel of model.wheels){wheel.rotation.x=model.wheelAngle;wheel.rotation.y=model.frontWheels.includes(wheel)?-steer*.35:0;}
-        model.headlight.intensity=night*(model.state.kind==='car'?7:4);
+        model.headlight.visible=night>.01&&lit.has(model.state.id);model.headlight.intensity=night*(model.state.kind==='car'?7:4);
       }
     }
     function active(id){if(!id)return null;return [...models.values()].find(model=>model.state.driverId===id||(model.state.passengerIds||[]).includes(id))||null;}

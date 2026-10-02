@@ -8,7 +8,7 @@ import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 
-test('punch PvP counts rapid clicks, resolves instantly, applies damage and knockback, and rejects floods', {timeout:15000}, async()=>{
+test('punch PvP counts rapid clicks, rejects floods and automatically respawns a corpse after ten seconds', {timeout:30000}, async()=>{
   const fixture=await mkdtemp(join(tmpdir(),'lowkey-combat-test-'));
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
@@ -58,6 +58,14 @@ test('punch PvP counts rapid clicks, resolves instantly, applies damage and knoc
     assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'snowball',facing:0,pitch:0})).status,429,'snowball retains its separate cooldown');
     assert.equal((await attack(32,Math.PI)).status,200,'a snowball cooldown does not block punching');
     assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'tomato'})).status,400);
+    assert.equal((await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:.18,z:7},jumping:false})).status,204);
+    for(let id=33;id<=49;id++)assert.equal((await attack(id)).status,200);
+    const death=await waitFor(()=>target.events.find(e=>e.type==='weapon-health'&&e.health===0));
+    const corpse=await waitFor(()=>attacker.events.find(e=>e.type==='player-death'));
+    assert.equal(corpse.corpse.playerId,target.id);assert.ok(death.deadUntil-Date.now()>9400);assert.equal(corpse.corpse.expiresAt,death.deadUntil);
+    assert.equal((await post(target.cookie,'/api/combat',{id:target.id,action:'punch',swingId:1,facing:0,pitch:0})).status,409);
+    await delay(500);assert.equal(target.events.some(e=>e.type==='weapon-health'&&e.health===100&&e.respawnPosition),false);
+    await delay(9700);const revived=await waitFor(()=>target.events.find(e=>e.type==='weapon-health'&&e.health===100&&e.respawnPosition));assert.equal(revived.deadUntil,0);
   }finally{
     for(const stream of streams)stream.abort();const stopped=once(child,'exit');child.kill();await stopped;
     assert.equal(dirname(resolve(fixture)),resolve(tmpdir()));assert.ok(basename(fixture).startsWith('lowkey-combat-test-'));
