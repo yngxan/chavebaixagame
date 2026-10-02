@@ -816,7 +816,7 @@ const server = createServer(async (request, response) => {
         if(vehicle.wrecked||vehicle.hijacking)return json(response,409,{error:'O veículo não está disponível para dirigir.'});
         if(!Number.isFinite(data.throttle)||!Number.isFinite(data.steer)||Math.abs(data.throttle)>1||Math.abs(data.steer)>1||!Number.isSafeInteger(data.sequence))return json(response,400,{error:'Comando de direção inválido.'});
         const previous=vehicleInputs.get(vehicle.id);
-        if(data.sequence<=(previous?.sequence??-1)||now-(previous?.at??0)<25){response.writeHead(204);return response.end();}
+        if(data.sequence<=(previous?.sequence??-1)){response.writeHead(204);return response.end();}
         vehicleInputs.set(vehicle.id,{throttle:data.throttle,steer:data.steer,brake:data.brake===true,wheelie:data.wheelie===true,at:now,sequence:data.sequence});
         response.writeHead(204);return response.end();
       } else return json(response,400,{error:'Ação de veículo inválida.'});
@@ -1330,7 +1330,7 @@ setInterval(()=>{
     if(client.deadUntil){releaseVehicle(player);send(client.response,{type:'vehicle-exit',position:player.position});changed=true;continue;}
     occupied=true;
     if(vehicle.hijacking){const pending=pendingHijacks.get(vehicle.id);if(!pending||!players.has(pending.thiefId)){cancelVehicleHijack(vehicle);changed=true;}}
-    const input=vehicleInputs.get(vehicle.id),controls=vehicle.wrecked||vehicle.hijacking?{throttle:0,steer:0,brake:true}:input&&now-input.at<350?input:{throttle:0,steer:0,brake:true};
+    const input=vehicleInputs.get(vehicle.id),controls=vehicle.wrecked||vehicle.hijacking?{throttle:0,steer:0,brake:true}:input&&now-input.at<800?input:{throttle:0,steer:0,brake:true};
     const obstacles=LowkeyWorld.vehicleObstacles(vehicle,vehicles.values());
     const steps=Math.max(1,Math.ceil(dt/.025));let impact=null;for(let i=0;i<steps;i++){LowkeyWorld.advanceVehicle(vehicle,controls,dt/steps,obstacles);if(vehicle.collision){impact=vehicle.collision;break;}}
     const previousSpeed=impact?.speed||0;

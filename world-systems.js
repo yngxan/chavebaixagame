@@ -69,10 +69,14 @@
   function crossesSolid(from,to){if(to.y<-.3)return false;for(const obstacle of combatObstacles){if(to.y>=obstacle.maxY-.12||from.y>=obstacle.maxY-.12)continue;const t=boxHit({...from,y:from.y+.75},{...to,y:to.y+.75},obstacle,.18);if(t!==null&&t>.01&&t<.99)return true;}return false;}
   function clearAt(x, z, radius, obstacles = drivingObstacles) {
     const bounds=city.bounds;
-    if (x<bounds.minX+1+radius||x>bounds.maxX-1-radius||z<bounds.minZ+1+radius||z>bounds.maxZ-1-radius||groundHeight(x,z)===null) return false;
+    if (x<bounds.minX+1+radius||x>bounds.maxX-1-radius||z<bounds.minZ+1+radius||z>bounds.maxZ-1-radius) return false;
+    // The ground depends on the probe, not on each obstacle in the whole city.
+    const floor=groundHeight(x,z);if(floor===null)return false;
     for (const obstacle of obstacles) {
-      const floor=groundHeight(x,z)??-.05;if(obstacle.minY!==undefined&&(obstacle.minY>floor+1.8||obstacle.maxY<floor+.02))continue;
+      if(obstacle.minY!==undefined&&(obstacle.minY>floor+1.8||obstacle.maxY<floor+.02))continue;
       const dx=x-obstacle.x, dz=z-obstacle.z;
+      const reach=(obstacle.r??Math.hypot(obstacle.hx,obstacle.hz))+radius;
+      if(Math.abs(dx)>reach||Math.abs(dz)>reach)continue;
       if (obstacle.r !== undefined) { if (Math.hypot(dx,dz) < obstacle.r+radius) return false; }
       else {
         const c=Math.cos(obstacle.rot||0),s=Math.sin(obstacle.rot||0);
