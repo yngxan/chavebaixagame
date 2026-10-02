@@ -80,7 +80,7 @@ test('vehicles are shared, proximity-checked, server-driven and freed on disconn
     assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'exit'})).status,409,'must brake before exiting');
     await delay(1300);
     const stopped=await waitFor(()=>{const vehicle=latest(observer)?.vehicles.find(vehicle=>vehicle.id===carId);return vehicle&&Math.abs(vehicle.speed)<1&&vehicle;});
-    assert.ok(stopped.x<0,'client position spoof does not move the vehicle');
+    assert.ok(Math.hypot(stopped.x-40,stopped.z-40)>30,'client position spoof does not move the vehicle to the forged position');
     assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'exit'})).status,200);
     const exit=await waitFor(()=>thief.events.find(event=>event.type==='vehicle-exit'));
     thief.position=exit.position;assert.equal(exit.position.y,LowkeyWorld.groundHeight(exit.position.x,exit.position.z));

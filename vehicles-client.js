@@ -83,19 +83,23 @@
     }
     function update(dt,now,serverNow,localId,input,night,localPosition) {
       const focus=localPosition||active(localId)?.group.position||new THREE.Vector3(),lit=new Set([...models.values()].filter(m=>m.group.position.distanceTo(focus)<28).sort((a,b)=>a.group.position.distanceToSquared(focus)-b.group.position.distanceToSquared(focus)).slice(0,4).map(m=>m.state.id));
+      let collisionStates=null;
       for(const model of models.values()) {
         const owned=localId&&model.state.driverId===localId;
-        const obstacles=LowkeyWorld.vehicleObstacles(model.state,[...models.values()].map(other=>({...other.state,x:other.group.position.x,z:other.group.position.z}))),controls=model.state.wrecked||model.state.hijacking?{throttle:0,steer:0,brake:true}:input;
         let pose;
         if(owned) {
+          // Only the driver's vehicle runs physics. Remote vehicles just interpolate.
+          collisionStates ||= [...models.values()].map(other=>other.state);
+          const obstacles=LowkeyWorld.vehicleObstacles(model.state,collisionStates),controls=model.state.wrecked||model.state.hijacking?{throttle:0,steer:0,brake:true}:input;
           if(model.pending) {
-            const expected=model.pending,steps=Math.ceil(model.pendingAge/.025);
-            for(let i=0;i<steps;i++){LowkeyWorld.advanceVehicle(expected,controls,model.pendingAge/steps,obstacles);if(expected.collision)break;}
+            const expected=model.pending,age=Math.min(.3,Math.max(0,(serverNow-model.authoritativeAt)/1000)),steps=Math.ceil(age/.025);
+            for(let i=0;i<steps;i++){LowkeyWorld.advanceVehicle(expected,controls,age/steps,obstacles);if(expected.collision)break;}
             if(Math.hypot(model.predicted.x-expected.x,model.predicted.z-expected.z)>4||model.predicted.driverId!==expected.driverId||model.state.hijacking||model.state.wrecked){model.predicted={...expected};model.correction=null;}
             else model.correction={x:expected.x-model.predicted.x,z:expected.z-model.predicted.z,rotation:Math.atan2(Math.sin(expected.rotation-model.predicted.rotation),Math.cos(expected.rotation-model.predicted.rotation))};
             model.predicted.speed=expected.speed;model.predicted.steering=expected.steering;model.predicted.wheelieAngle=expected.wheelieAngle;model.pending=null;
           }
-          LowkeyWorld.advanceVehicle(model.predicted,controls,dt,obstacles);
+          const steps=Math.max(1,Math.ceil(dt/.025));
+          for(let i=0;i<steps;i++){LowkeyWorld.advanceVehicle(model.predicted,controls,dt/steps,obstacles);if(model.predicted.collision)break;}
           if(model.correction){const blend=1-Math.exp(-10*dt),x=model.predicted.x+model.correction.x*blend,z=model.predicted.z+model.correction.z*blend;if(LowkeyWorld.vehicleClearAt(model.predicted,x,z,model.predicted.rotation+model.correction.rotation*blend,obstacles)){for(const axis of ['x','z','rotation']){const delta=model.correction[axis]*blend;model.predicted[axis]+=delta;model.correction[axis]-=delta;}}else model.correction=null;}
           pose=model.predicted;
         } else {pose=model.motion.sample(now,dt)||model.state;model.pending=null;}
