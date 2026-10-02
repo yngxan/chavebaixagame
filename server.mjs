@@ -5,6 +5,7 @@ import { dirname, extname, join } from 'node:path';
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import './world-systems.js';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const INFINITE_GLOCK_AMMO = true;
@@ -24,6 +25,17 @@ const PROFILE_FILE = join(ROOT, 'data', 'accounts.json');
 const scrypt = promisify(scryptCallback);
 const clients = new Map();
 const players = new Map();
+const vehicles = new Map(LowkeyWorld.initialVehicles().map(vehicle=>[vehicle.id,vehicle]));
+const vehicleInputs = new Map();
+const worldSnapshot = () => ({serverTime:Date.now(),segmentMs:LowkeyWorld.SEGMENT_MS,vehicles:[...vehicles.values()]});
+function releaseVehicle(player) {
+  const vehicle=vehicles.get(player?.vehicleId);
+  if(!vehicle||vehicle.driverId!==player.id)return;
+  vehicle.driverId=null;vehicle.speed=0;vehicleInputs.delete(vehicle.id);player.vehicleId=null;
+  const exit=LowkeyWorld.exitPosition(vehicle);if(exit)player.position=exit;
+  player.walking=false;player.jumping=false;player.speed=0;player.motionTime=Date.now();player.motionReset=(player.motionReset||0)+1;
+  lastKnownPositions.set(player.accountId,player.position);
+}
 const projectiles = new Map();
 // Movement is client-predicted for responsiveness, but accepted positions stay server-bounded.
 // Credits allow jump/knockback and short network jitter without permitting teleport speeds.
@@ -65,6 +77,10 @@ const allowedFiles = new Map([
   ['/index.html', 'index.html'],
   ['/three.min.js', 'three.min.js'],
   ['/stage-media.js', 'stage-media.js'],
+  ['/motion-sync.js', 'motion-sync.js'],
+  ['/world-systems.js', 'world-systems.js'],
+  ['/vehicles-client.js', 'vehicles-client.js'],
+  ['/environment.js', 'environment.js'],
   ['/THREE-LICENSE.txt', 'THREE-LICENSE.txt'],
   ['/LEIA-ME.md', 'LEIA-ME.md'],
 ]);
@@ -529,12 +545,17 @@ const server = createServer(async (request, response) => {
     response.flushHeaders();
     clients.set(id, { response, accountId: authenticatedAccount.id, address, lastStateAt: 0, lastStateSequence: -1, motionAt: Date.now(), movementCredits: 4, lastChatAt: 0, lastEmoteAt: -Infinity, lastCombatAt: -Infinity, weapon: { mag: 20, reserve: 120, reloadingUntil: 0, lastShotAt: -Infinity, lastBurstAt: -Infinity, burst: 0 }, deadUntil: 0, respawnPosition: { x: Math.cos(angle) * radius, y: 0, z: 5 + Math.sin(angle) * radius }, voiceSignalTimes: [], sfuSessionTimes: [], voicePublishSessionId: null, voicePublishMid: null, voiceReady: false, voiceReceiveSessionId: null, voiceMutationQueue: Promise.resolve(), voiceSubscriptions: new Map(), turnIceServers: null, turnIceExpiresAt: 0, turnIceRequest: null });
     players.set(id, player);
+    clients.get(id).compactMotion = url.searchParams.get('motion') === '2';
     send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: stageSnapshot(authenticatedAccount.id), weapon: { mag: 20, reserve: 120, reloading: false }, health: 100 });
+    send(response, {type:'world-state',...worldSnapshot()});
     broadcast({ type: 'join', player }, id);
     response.on('close', () => {
       const current = clients.get(id);
       if (!current || current.response !== response) return;
       clients.delete(id);
+      const wasDriving = Boolean(players.get(id)?.vehicleId);
+      releaseVehicle(players.get(id));
+      if(wasDriving)broadcast({type:'world-state',...worldSnapshot()});
       void queueVoiceMutation(current, () => cleanupSfuClient(current));
       players.delete(id);
       broadcast({ type: 'leave', id });
@@ -549,6 +570,7 @@ const server = createServer(async (request, response) => {
       const player = players.get(String(data.id || ''));
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       const now = Date.now();
+      if(player.vehicleId){response.writeHead(204);return response.end();}
       if (client.deadUntil) {
         if (now < client.deadUntil) { response.writeHead(204); return response.end(); }
         client.deadUntil = 0;
@@ -558,6 +580,8 @@ const server = createServer(async (request, response) => {
         player.walking = false;
         player.jumping = false;
         player.speed = 0;
+        player.motionTime = now;
+        player.motionReset = (player.motionReset || 0) + 1;
         send(client.response, { type: 'weapon-health', targetId: player.id, health: 100, respawnPosition: player.position });
         broadcast({ type: 'state', player }, player.id);
         response.writeHead(204);
@@ -565,7 +589,7 @@ const server = createServer(async (request, response) => {
       }
       const sequence = data.sequence;
       if (Number.isSafeInteger(sequence) && sequence >= 0 && sequence <= client.lastStateSequence) { response.writeHead(204); return response.end(); }
-      if (now - client.lastStateAt < 40) { response.writeHead(204); return response.end(); }
+      if (now - client.lastStateAt < 15) { response.writeHead(204); return response.end(); }
       if (Number.isSafeInteger(sequence) && sequence >= 0) client.lastStateSequence = sequence;
       client.lastStateAt = now;
       const appearance = data.appearance || {};
@@ -576,32 +600,77 @@ const server = createServer(async (request, response) => {
       const elapsed = Math.min(1.5, Math.max(.04, (now - client.motionAt) / 1000));
       const dx = nextPosition.x - player.position.x, dy = nextPosition.y - player.position.y, dz = nextPosition.z - player.position.z;
       const horizontalDistance = Math.hypot(dx, dz), verticalDistance = Math.abs(dy);
-      const movementCredits = Math.min(5, client.movementCredits + elapsed * 10.25);
+      const movementCredits = Math.min(5, client.movementCredits + elapsed * 12.5);
       const initialSpawnFall = player.position.y >= 12 && nextPosition.y < player.position.y && nextPosition.y >= -1;
       const fallReset = player.position.y < -35 && nextPosition.y >= 12 && Math.hypot(nextPosition.x - client.respawnPosition.x, nextPosition.z - client.respawnPosition.z) <= 1.5;
-      if ((!fallReset && horizontalDistance > movementCredits + .35) || (!initialSpawnFall && !fallReset && verticalDistance > elapsed * 18 + 1.8)) return noteMovementViolation(client, response, 'velocidade impossível');
+      if ((!fallReset && horizontalDistance > movementCredits + .35) || (!initialSpawnFall && !fallReset && verticalDistance > elapsed * 18 + 1.8)) return noteMovementViolation(client, response, `velocidade impossível: horizontal=${horizontalDistance.toFixed(2)}, vertical=${verticalDistance.toFixed(2)}, intervalo=${elapsed.toFixed(3)}, altura=${player.position.y.toFixed(2)}→${nextPosition.y.toFixed(2)}`);
       client.motionAt = now;
       client.movementCredits = fallReset ? 4 : Math.max(0, movementCredits - horizontalDistance);
       lastKnownPositions.set(client.accountId, nextPosition);
-      player.name = cleanName(data.name);
-      player.appearance = cleanAppearance(appearance);
+      const oldProfile = JSON.stringify([player.name, player.appearance]);
+      if (data.name !== undefined) player.name = cleanName(data.name);
+      if (data.appearance !== undefined) player.appearance = cleanAppearance(appearance);
       player.position = nextPosition;
+      const sampledAt = Number(data.sampledAt);
+      const captureDelta = Number.isFinite(sampledAt) && Number.isFinite(client.lastSampleAt) && sampledAt > client.lastSampleAt
+        ? Math.min(1500, sampledAt - client.lastSampleAt) : elapsed * 1000;
+      client.lastSampleAt = Number.isFinite(sampledAt) ? sampledAt : undefined;
+      player.motionTime = (player.motionTime || now - captureDelta) + captureDelta;
       const rotation = finite(data.rotation, player.rotation);
       player.rotation = Math.atan2(Math.sin(rotation), Math.cos(rotation));
-      player.speed = Math.min(11, horizontalDistance / elapsed);
+      player.speed = Math.min(14, horizontalDistance / Math.max(.015, captureDelta / 1000));
       player.walking = horizontalDistance > .025;
-      player.jumping = player.position.y > 0.05;
+      player.jumping = data.jumping === true;
       player.voiceEnabled = hasSfuConfig() ? Boolean(client.voiceReady && client.voicePublishSessionId) : Boolean(data.voiceEnabled);
       player.glockEquipped = Boolean(data.glockEquipped);
       player.glockPitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.glockPitch)));
       player.glockAiming = player.glockEquipped && data.glockAiming === true;
-      broadcast({ type: 'state', player }, player.id);
+      const profileChanged = JSON.stringify([player.name, player.appearance]) !== oldProfile;
+      const { appearance: fullAppearance, name: fullName, accountId: privateAccountId, ...motion } = player;
+      for (const [recipientId, recipient] of clients) if (recipientId !== player.id) {
+        send(recipient.response, { type: 'state', player: profileChanged || !recipient.compactMotion ? { ...motion, name: fullName, appearance: fullAppearance } : motion });
+      }
       response.writeHead(204);
       return response.end();
     } catch (error) {
       if (!response.headersSent) return json(response, error.statusCode || 400, { error: error.message });
       return response.destroy();
     }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/vehicle') {
+    try {
+      const data=await readJson(request,2048),player=players.get(String(data.id||'')),client=clients.get(String(data.id||'')),now=Date.now();
+      if(!player||!client||client.accountId!==authenticatedAccount.id)return json(response,401,{error:'Jogador não conectado.'});
+      if(client.deadUntil)return json(response,409,{error:'Espere voltar à praça.'});
+      if(data.action==='enter') {
+        if(player.vehicleId)return json(response,409,{error:'Você já está dirigindo.'});
+        const vehicle=vehicles.get(String(data.vehicleId||''));
+        if(!vehicle)return json(response,404,{error:'Veículo não encontrado.'});
+        if(vehicle.driverId)return json(response,409,{error:'Esse veículo está ocupado.'});
+        if(Math.hypot(player.position.x-vehicle.x,player.position.z-vehicle.z)>3.2||Math.abs(player.position.y-vehicle.y)>1.5)return json(response,403,{error:'Chegue mais perto para entrar.'});
+        vehicle.driverId=player.id;vehicle.speed=0;player.vehicleId=vehicle.id;player.glockEquipped=false;player.glockAiming=false;
+        const pose=LowkeyWorld.driverPose(vehicle);player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.walking=false;player.jumping=false;player.motionTime=now;player.motionReset=(player.motionReset||0)+1;
+        vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:-1});
+      } else if(data.action==='exit') {
+        const vehicle=vehicles.get(player.vehicleId);
+        if(!vehicle||vehicle.driverId!==player.id)return json(response,409,{error:'Você não está dirigindo.'});
+        if(Math.abs(vehicle.speed)>2.5)return json(response,409,{error:'Freie antes de sair.'});
+        if(!LowkeyWorld.exitPosition(vehicle))return json(response,409,{error:'Sem espaço para sair. Afaste o veículo.'});
+        releaseVehicle(player);client.motionAt=now;client.movementCredits=4;client.lastSampleAt=undefined;
+        send(client.response,{type:'vehicle-exit',position:player.position});
+      } else if(data.action==='input') {
+        const vehicle=vehicles.get(player.vehicleId);
+        if(!vehicle||vehicle.driverId!==player.id)return json(response,403,{error:'Você não dirige esse veículo.'});
+        if(!Number.isFinite(data.throttle)||!Number.isFinite(data.steer)||Math.abs(data.throttle)>1||Math.abs(data.steer)>1||!Number.isSafeInteger(data.sequence))return json(response,400,{error:'Comando de direção inválido.'});
+        const previous=vehicleInputs.get(vehicle.id);
+        if(data.sequence<=(previous?.sequence??-1)||now-(previous?.at??0)<25){response.writeHead(204);return response.end();}
+        vehicleInputs.set(vehicle.id,{throttle:data.throttle,steer:data.steer,brake:data.brake===true,at:now,sequence:data.sequence});
+        response.writeHead(204);return response.end();
+      } else return json(response,400,{error:'Ação de veículo inválida.'});
+      broadcast({type:'state',player});broadcast({type:'world-state',...worldSnapshot()});
+      return json(response,200,{ok:true});
+    } catch(error){return json(response,error.statusCode||400,{error:error.message});}
   }
 
   if (request.method === 'POST' && url.pathname === '/api/voice/sfu/publish') {
@@ -831,6 +900,7 @@ const server = createServer(async (request, response) => {
       const allowedEmotes = new Set(['wave', 'dance', 'clap', 'heart', 'smoke']);
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (!allowedEmotes.has(emote)) return json(response, 400, { error: 'Emote inválido.' });
+      if (player.vehicleId) return json(response, 409, { error: 'Saia do veículo para usar emotes.' });
       const now = Date.now();
       if (now - client.lastEmoteAt < 650) return json(response, 429, { error: 'Espera um instante antes de outro emote.' });
       client.lastEmoteAt = now;
@@ -872,8 +942,10 @@ const server = createServer(async (request, response) => {
     try {
       const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id), action = String(data.action || '');
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
+      if (player.vehicleId) return json(response, 409, { error: 'Saia do veículo para atacar.' });
       if (client.deadUntil) return json(response, 409, { error: 'Espere voltar à praça.' });
       if (action === 'glock') {
+        if (player.vehicleId) return json(response, 409, { error: 'Saia do veículo para atacar.' });
         const weapon = client.weapon, now = Date.now();
         if (weapon.reloadingUntil > now) return json(response, 409, { error: 'A Glock está recarregando.' });
         if (!INFINITE_GLOCK_AMMO && weapon.mag <= 0) return json(response, 409, { error: 'Pente vazio · aperte R para recarregar.' });
@@ -1037,6 +1109,24 @@ const server = createServer(async (request, response) => {
     json(response, 500, { error: 'Não consegui abrir os arquivos do jogo.' });
   }
 });
+
+let lastVehicleTick=Date.now(),lastVehicleBroadcast=0;
+setInterval(()=>{
+  const now=Date.now(),dt=Math.min(.1,(now-lastVehicleTick)/1000);lastVehicleTick=now;let occupied=false,changed=false;
+  for(const vehicle of vehicles.values()) {
+    if(!vehicle.driverId)continue;
+    const player=players.get(vehicle.driverId),client=clients.get(vehicle.driverId);
+    if(!player||!client){vehicle.driverId=null;vehicle.speed=0;vehicleInputs.delete(vehicle.id);changed=true;continue;}
+    if(client.deadUntil){releaseVehicle(player);send(client.response,{type:'vehicle-exit',position:player.position});changed=true;continue;}
+    occupied=true;const input=vehicleInputs.get(vehicle.id),controls=input&&now-input.at<350?input:{throttle:0,steer:0,brake:true};
+    const obstacles=[...LowkeyWorld.drivingObstacles,...[...vehicles.values()].filter(other=>other.id!==vehicle.id).map(other=>({x:other.x,z:other.z,r:other.kind==='car'?1.05:.46})),...[...players.values()].filter(other=>other.id!==player.id&&!other.vehicleId&&Math.abs(other.position.y-vehicle.y)<1.5).map(other=>({x:other.position.x,z:other.position.z,r:.32}))];
+    const steps=Math.max(1,Math.ceil(dt/.025));for(let i=0;i<steps;i++)LowkeyWorld.advanceVehicle(vehicle,controls,dt/steps,obstacles);
+    const pose=LowkeyWorld.driverPose(vehicle);player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.speed=Math.abs(vehicle.speed);player.walking=false;player.jumping=false;player.motionTime=now;
+    lastKnownPositions.set(player.accountId,player.position);
+  }
+  if(changed||(occupied&&now-lastVehicleBroadcast>=100)){lastVehicleBroadcast=now;broadcast({type:'world-state',...worldSnapshot()});}
+},50).unref();
+setInterval(()=>broadcast({type:'world-time',serverTime:Date.now(),segmentMs:LowkeyWorld.SEGMENT_MS}),30000).unref();
 
 setInterval(() => {
   for (const client of clients.values()) client.response.write(': keepalive\n\n');
