@@ -1,30 +1,58 @@
 (() => {
   function create({THREE,scene,box,mats}) {
     const models=new Map(),rubber=new THREE.MeshStandardMaterial({color:0x16191d,roughness:.95}),chrome=new THREE.MeshStandardMaterial({color:0xb9c3ce,metalness:.7,roughness:.3});
-    const glass=new THREE.MeshStandardMaterial({color:0x9dc6db,transparent:true,opacity:.34,roughness:.2,metalness:.1,depthWrite:false});
+    const glass=new THREE.MeshStandardMaterial({color:0x8ab9cc,transparent:true,opacity:.42,roughness:.12,metalness:.15,depthWrite:false});
+    const trim=new THREE.MeshStandardMaterial({color:0x252b33,roughness:.55,metalness:.25}),seatMaterial=new THREE.MeshStandardMaterial({color:0x343d49,roughness:.9});
+    const rearLamp=new THREE.MeshStandardMaterial({color:0xe83c40,emissive:0xbd1724,emissiveIntensity:.55,roughness:.3});
     const lamp=new THREE.MeshStandardMaterial({color:0xffe9bc,emissive:0xffdba0,emissiveIntensity:1});
     for(const state of LowkeyWorld.initialVehicles()) {
       const group=new THREE.Group(),wheels=[],frontWheels=[];scene.add(group);let doorPivot=null;
       const paint=new THREE.MeshStandardMaterial({color:state.kind==='car'?0x236fa7:0xbf343d,roughness:.4,metalness:.3});
-      function wheel(x,z,radius,width,front){const root=new THREE.Group();root.position.set(x,radius,z);group.add(root);const mesh=new THREE.Mesh(new THREE.CylinderGeometry(radius,radius,width,14),rubber);mesh.rotation.z=Math.PI/2;mesh.castShadow=true;root.add(mesh);const hub=new THREE.Mesh(new THREE.CylinderGeometry(radius*.52,radius*.52,width+.015,10),chrome);hub.rotation.z=Math.PI/2;root.add(hub);wheels.push(root);if(front)frontWheels.push(root);}
+      function wheel(x,z,radius,width,front){const root=new THREE.Group();root.position.set(x,radius,z);group.add(root);const mesh=new THREE.Mesh(new THREE.CylinderGeometry(radius,radius,width,16),rubber);mesh.rotation.z=Math.PI/2;mesh.castShadow=true;root.add(mesh);const hub=new THREE.Mesh(new THREE.CylinderGeometry(radius*.67,radius*.67,width+.018,12),trim);hub.rotation.z=Math.PI/2;root.add(hub);for(const side of [-1,1]){for(let i=0;i<5;i++){const spoke=box(root,side*(width/2+.014),0,0,.018,radius*1.16,.055,chrome,{cast:false});spoke.rotation.x=i*Math.PI/5;}box(root,side*(width/2+.022),0,0,.026,.10,.10,chrome,{cast:false});}wheels.push(root);if(front)frontWheels.push(root);}
       if(state.kind==='car') {
-        box(group,0,.48,0,1.8,.20,3.4,rubber);box(group,0,.73,0,1.78,.38,3.45,paint);
-        box(group,0,1.2,-.22,1.55,.76,1.58,glass,{cast:false});box(group,0,1.62,-.22,1.62,.12,1.72,paint);
-        for(const x of [-.76,.76])for(const z of [-.96,.53])box(group,x,1.24,z,.10,.68,.10,paint);
-        box(group,0,.97,1.10,1.70,.08,1.06,paint);box(group,0,.82,-1.42,1.72,.16,.58,paint);
+        box(group,0,.48,0,1.8,.20,3.4,trim);box(group,0,.73,0,1.78,.38,3.45,paint);
+        box(group,0,1.62,-.22,1.48,.10,1.36,paint);
+        const windshield=box(group,0,1.29,.56,1.4,.57,.035,glass,{cast:false});windshield.rotation.x=-.32;
+        const rearWindow=box(group,0,1.29,-1.02,1.4,.55,.035,glass,{cast:false});rearWindow.rotation.x=.3;
+        for(const x of [-.74,.74]){
+          const frontPillar=box(group,x,1.3,.56,.065,.63,.065,paint);frontPillar.rotation.x=-.32;
+          const rearPillar=box(group,x,1.3,-1.02,.075,.61,.075,paint);rearPillar.rotation.x=.3;
+          box(group,x,1.3,-.37,.07,.58,.055,trim);
+          if(x<0)box(group,x,1.31,.06,.025,.43,.77,glass,{cast:false});
+          box(group,x,1.31,-.7,.025,.43,.47,glass,{cast:false});
+          box(group,x*1.18,.52,0,.08,.09,2.3,trim);
+          box(group,x*1.27,1.14,.5,.22,.12,.20,paint);
+          box(group,x*1.4,1.14,.49,.025,.09,.15,glass,{cast:false});
+        }
+        const hood=box(group,0,.97,1.14,1.7,.12,1.00,paint);hood.rotation.x=.05;
+        box(group,0,.91,-1.42,1.72,.15,.58,paint);
+        for(const x of [-.49,.49])box(group,x,.99,1.12,.04,.012,.83,trim,{cast:false});
         for(const x of [-.91,.91])for(const z of [-1.14,1.14])wheel(x,z,.41,.28,z>0);
-        doorPivot=new THREE.Group();doorPivot.position.set(.90,.78,.52);group.add(doorPivot);box(doorPivot,.40,0,0,.09,.58,1.02,paint);box(doorPivot,.405,.14,0,.07,.28,.84,glass,{cast:false});box(doorPivot,.43,.30,0,.08,.06,.9,paint);
-        for(const x of [-.58,.58]){box(group,x,.80,1.74,.38,.16,.06,lamp,{cast:false});box(group,x,.8,-1.74,.4,.14,.06,mats.red);box(group,x,1.11,.35,.2,.09,.2,paint);}
-        box(group,0,.55,1.76,1.68,.12,.08,chrome);box(group,0,.55,-1.76,1.68,.12,.08,chrome);
-        for(const x of [-.35,.35])box(group,x,.57,-.10,.55,.12,.57,rubber);
+        doorPivot=new THREE.Group();doorPivot.position.set(.90,.78,.52);group.add(doorPivot);box(doorPivot,.015,0,-.49,.065,.32,.98,paint);box(doorPivot,-.15,.53,-.43,.025,.43,.77,glass,{cast:false});box(doorPivot,-.13,.28,-.43,.07,.045,.88,trim);box(doorPivot,.06,.1,-.75,.025,.045,.15,chrome,{cast:false});
+        box(group,-.90,.88,-.23,.025,.045,.15,chrome,{cast:false});
+        for(const x of [-.61,.61]){box(group,x,.84,1.74,.4,.15,.065,lamp,{cast:false});box(group,x,.85,-1.74,.43,.12,.065,rearLamp,{cast:false});}
+        box(group,0,.68,1.755,.73,.17,.025,trim);for(const y of [.64,.69,.74])box(group,0,y,1.775,.68,.012,.012,chrome,{cast:false});
+        box(group,0,.54,1.76,1.68,.08,.10,trim);box(group,0,.54,-1.76,1.68,.08,.10,trim);
+        box(group,0,.70,-1.765,.34,.09,.012,chrome,{cast:false});box(group,-.59,.48,-1.77,.15,.08,.15,chrome);
+        for(const x of [-.40,.40]){box(group,x,.59,-.12,.52,.15,.57,seatMaterial);const back=box(group,x,.87,-.42,.52,.48,.12,seatMaterial);back.rotation.x=-.1;box(group,x,1.15,-.44,.27,.17,.13,seatMaterial);}
+        box(group,0,.97,.39,1.36,.13,.23,trim);const steering=new THREE.Mesh(new THREE.TorusGeometry(.14,.027,6,12),trim);steering.position.set(.32,1.08,.26);steering.rotation.x=-.35;group.add(steering);
       } else {
         wheel(0,-.85,.36,.16,false);wheel(0,.9,.36,.16,true);
-        box(group,0,.58,0,.2,.16,1.7,chrome);box(group,0,.9,.21,.47,.37,.66,paint);
-        box(group,0,.8,-.38,.42,.12,.80,rubber);box(group,0,.60,-.69,.49,.09,.5,paint);
-        for(const x of [-.1,.1]){const fork=box(group,x,.72,.8,.06,.72,.06,chrome);fork.rotation.x=-.2;}
-        box(group,0,1.08,.73,.70,.06,.07,chrome);for(const x of [-.33,.33])box(group,x,1.08,.73,.16,.08,.08,rubber);
-        box(group,0,1.02,.89,.26,.20,.08,lamp);box(group,0,.80,-.84,.24,.10,.05,mats.red);
-        box(group,.25,.48,-.45,.11,.11,.6,chrome);
+        box(group,0,.56,-.04,.22,.16,1.65,trim);
+        const tank=box(group,0,.89,.21,.45,.30,.62,paint);tank.rotation.x=.12;
+        box(group,0,1.05,.18,.18,.022,.13,chrome,{cast:false});
+        const engine=new THREE.Mesh(new THREE.CylinderGeometry(.20,.21,.27,8),chrome);engine.position.set(0,.5,.04);engine.rotation.z=Math.PI/2;group.add(engine);
+        for(const y of [.42,.48,.54,.60])box(group,0,y,.09,.40,.025,.31,trim,{cast:false});
+        for(const x of [-.16,.16]){const frame=box(group,x,.61,-.11,.05,.52,.055,trim);frame.rotation.x=.7;box(group,x,.39,-.31,.055,.07,.62,chrome);}
+        box(group,0,.83,-.29,.43,.12,.59,rubber);box(group,0,.88,-.64,.38,.12,.25,rubber);
+        const tail=box(group,0,.75,-.75,.41,.14,.40,paint);tail.rotation.x=-.12;
+        for(const z of [-.85,.9]){const fender=box(group,0,.73,z,.25,.07,.47,paint);fender.rotation.x=z>0?.07:-.15;}
+        for(const x of [-.1,.1]){const fork=box(group,x,.73,.79,.065,.77,.065,chrome);fork.rotation.x=-.2;const shock=box(group,x,.56,-.68,.055,.36,.055,chrome);shock.rotation.x=.42;}
+        box(group,0,1.10,.72,.70,.055,.065,chrome);for(const x of [-.33,.33]){box(group,x,1.10,.72,.16,.085,.085,rubber);const stem=box(group,x,1.25,.75,.025,.27,.025,chrome);stem.rotation.z=x<0?-.25:.25;box(group,x*1.14,1.36,.75,.18,.09,.05,trim);}
+        box(group,0,1.06,.89,.27,.23,.14,trim);box(group,0,1.06,.98,.22,.16,.035,lamp,{cast:false});
+        box(group,0,.80,-.95,.22,.075,.035,rearLamp,{cast:false});box(group,0,.63,-1.04,.16,.14,.025,chrome,{cast:false});
+        for(const x of [-.26,.26]){box(group,x,.42,-.2,.18,.045,.08,trim);box(group,x,.46,-.63,.14,.035,.07,trim);}
+        box(group,.27,.43,-.49,.13,.13,.75,chrome);box(group,.27,.43,-.88,.08,.08,.04,rubber);
       }
       const headlight=new THREE.PointLight(0xffdfa5,0,10,2);headlight.position.set(0,.90,state.kind==='car'?2:1.2);group.add(headlight);
       group.position.set(state.x,state.y,state.z);group.rotation.y=state.rotation;
@@ -42,23 +70,24 @@
     function update(dt,now,serverNow,localId,input,night) {
       for(const model of models.values()) {
         const owned=localId&&model.state.driverId===localId;
+        const obstacles=LowkeyWorld.vehicleObstacles(model.state,[...models.values()].map(other=>({...other.state,x:other.group.position.x,z:other.group.position.z}))),controls=model.state.wrecked||model.state.hijacking?{throttle:0,steer:0,brake:true}:input;
         let pose;
         if(owned) {
           if(model.pending) {
             const expected=model.pending,steps=Math.ceil(model.pendingAge/.025);
-            for(let i=0;i<steps;i++)LowkeyWorld.advanceVehicle(expected,input,model.pendingAge/steps);
-            if(Math.hypot(model.predicted.x-expected.x,model.predicted.z-expected.z)>4||model.predicted.driverId!==expected.driverId)model.predicted={...expected};
+            for(let i=0;i<steps;i++){LowkeyWorld.advanceVehicle(expected,controls,model.pendingAge/steps,obstacles);if(expected.collision)break;}
+            if(Math.hypot(model.predicted.x-expected.x,model.predicted.z-expected.z)>4||model.predicted.driverId!==expected.driverId||model.state.hijacking||model.state.wrecked){model.predicted={...expected};model.correction=null;}
             else model.correction={x:expected.x-model.predicted.x,z:expected.z-model.predicted.z,rotation:Math.atan2(Math.sin(expected.rotation-model.predicted.rotation),Math.cos(expected.rotation-model.predicted.rotation))};
             model.predicted.speed=expected.speed;model.predicted.steering=expected.steering;model.pending=null;
           }
-          LowkeyWorld.advanceVehicle(model.predicted,input,dt);
-          if(model.correction){const blend=1-Math.exp(-10*dt);for(const axis of ['x','z','rotation']){const delta=model.correction[axis]*blend;model.predicted[axis]+=delta;model.correction[axis]-=delta;}}
+          LowkeyWorld.advanceVehicle(model.predicted,controls,dt,obstacles);
+          if(model.correction){const blend=1-Math.exp(-10*dt),x=model.predicted.x+model.correction.x*blend,z=model.predicted.z+model.correction.z*blend;if(LowkeyWorld.clearAt(x,z,model.state.kind==='car'?1.05:.46,obstacles)){for(const axis of ['x','z','rotation']){const delta=model.correction[axis]*blend;model.predicted[axis]+=delta;model.correction[axis]-=delta;}}else model.correction=null;}
           pose=model.predicted;
         } else {pose=model.motion.sample(now,dt)||model.state;model.pending=null;}
         model.group.position.x=pose.x;model.group.position.z=pose.z;model.group.position.y=THREE.MathUtils.damp(model.group.position.y,pose.y,14,dt);model.group.rotation.y=pose.rotation;
         const speed=owned?model.predicted.speed:model.state.speed,steer=(owned?model.predicted.steering:model.state.steering)||0;
         model.group.rotation.z=THREE.MathUtils.damp(model.group.rotation.z,model.state.kind==='moto'?Math.max(-.24,Math.min(.24,steer*speed*.013)):0,8,dt);
-        if(model.doorPivot){const age=(serverNow-(model.state.hijacking?.startedAt||0))/1000,progress=model.state.hijacking?Math.max(0,Math.min(1,age/.65)):0,open=model.state.wrecked?.35:Math.sin(progress*Math.PI)*.95;model.doorPivot.rotation.y=THREE.MathUtils.damp(model.doorPivot.rotation.y,-open,18,dt);model.group.rotation.x=THREE.MathUtils.damp(model.group.rotation.x,model.state.wrecked?.08:0,5,dt);}
+        if(model.doorPivot){const progress=model.state.hijacking?Math.max(0,Math.min(1,(serverNow-model.state.hijacking.startedAt)/LowkeyWorld.HIJACK_MS)):0,open=model.state.wrecked?.35:model.state.hijacking?Math.min(1,progress/.28)*Math.min(1,(1-progress)/.12)*1.05:0;model.doorPivot.rotation.y=THREE.MathUtils.damp(model.doorPivot.rotation.y,-open,18,dt);model.group.rotation.x=THREE.MathUtils.damp(model.group.rotation.x,model.state.wrecked?.08:0,5,dt);}
         model.wheelAngle+=speed*dt/(model.state.kind==='car'?.41:.36);
         for(const wheel of model.wheels){wheel.rotation.x=model.wheelAngle;wheel.rotation.y=model.frontWheels.includes(wheel)?-steer*.35:0;}
         model.headlight.intensity=night*(model.state.kind==='car'?7:4);
@@ -66,12 +95,21 @@
     }
     function active(id){if(!id)return null;return [...models.values()].find(model=>model.state.driverId===id||(model.state.passengerIds||[]).includes(id))||null;}
     function isDriver(id,model){return Boolean(id&&model?.state.driverId===id);}
-    function canBoard(model){return Boolean(model&&!model.state.wrecked&&!model.state.hijacking&&(model.state.passengerIds||[]).length<(model.state.kind==='car'?1:1));}
+    function canBoard(model){return Boolean(model&&!model.state.wrecked&&!model.state.hijacking&&(!model.state.driverId||(model.state.passengerIds||[]).length<1));}
     function driverPose(model){return LowkeyWorld.driverPose({...model.state,x:model.group.position.x,y:model.group.position.y,z:model.group.position.z,rotation:model.group.rotation.y});}
     function passengerPose(model,seat=0){return LowkeyWorld.passengerPose({...model.state,x:model.group.position.x,y:model.group.position.y,z:model.group.position.z,rotation:model.group.rotation.y},seat);}
     function pose(model,id){if(isDriver(id,model))return driverPose(model);const seat=(model.state.passengerIds||[]).indexOf(id);return seat>=0?passengerPose(model,seat):driverPose(model);}
-    function nearest(position){return [...models.values()].filter(model=>!model.state.wrecked&&Math.hypot(position.x-model.group.position.x,position.z-model.group.position.z)<=3.2&&Math.abs(position.y-model.group.position.y)<1.5).sort((a,b)=>position.distanceTo(a.group.position)-position.distanceTo(b.group.position))[0]||null;}
-    return{models,receive,update,active,isDriver,canBoard,driverPose,passengerPose,pose,nearest};
+    function nearest(position,predicate=()=>true){return [...models.values()].filter(model=>!model.state.wrecked&&predicate(model)&&Math.hypot(position.x-model.group.position.x,position.z-model.group.position.z)<=3.5&&Math.abs(position.y-model.group.position.y)<1.5).sort((a,b)=>position.distanceTo(a.group.position)-position.distanceTo(b.group.position))[0]||null;}
+    function animateHijack(id,group,arms,legs,body,serverNow){
+      const model=[...models.values()].find(item=>item.state.hijacking&&(item.state.hijacking.thiefId===id||item.state.hijacking.victimId===id));
+      if(!model){if(group.userData.hijacking){group.userData.hijacking=false;group.scale.setScalar(1);body.rotation.set(0,0,0);for(const arm of arms){arm.rotation.set(0,0,0);arm.userData.forearm?.rotation.set(0,0,0);}for(const leg of legs)leg.rotation.set(0,0,0);}return false;}
+      const victim=model.state.hijacking.victimId===id,state={...model.state,x:model.group.position.x,y:model.group.position.y,z:model.group.position.z,rotation:model.group.rotation.y},pose=LowkeyWorld.hijackPose(state,victim?'victim':'thief',serverNow),t=pose.progress;
+      group.userData.hijacking=true;group.position.set(pose.x,pose.y,pose.z);group.rotation.y=pose.rotation;group.scale.setScalar(pose.scale);
+      if(victim){body.rotation.set(-.15*Math.sin(pose.pull*Math.PI),0,-.2*Math.sin(pose.pull*Math.PI));for(const [i,arm] of arms.entries()){arm.rotation.set(-.8*(1-pose.pull),0,(i?1:-1)*(.12+Math.sin(pose.pull*Math.PI)*.35));arm.userData.forearm?.rotation.set(-.3,0,0);}for(const [i,leg] of legs.entries())leg.rotation.set(-1.35*(1-pose.pull)+Math.sin(pose.pull*Math.PI)*(i?-.25:.3),0,0);}
+      else{const reach=Math.max(0,Math.min(1,(t-.12)/.13)),pull=pose.pull,enter=pose.enter;body.rotation.set(.18*reach*(1-enter)-.12*Math.sin(pull*Math.PI),0,-.08*Math.sin(pull*Math.PI));for(const [i,arm] of arms.entries()){const forward=i===0?reach:reach*Math.max(0,Math.min(1,(t-.27)/.1));arm.rotation.set(-1.45*forward*(1-enter)-1.1*enter,0,(i?1:-1)*.16);arm.userData.forearm?.rotation.set(-.2-forward*pull*.75,0,0);}for(const [i,leg] of legs.entries()){const stride=t<.22?Math.sin(t/.22*Math.PI*2)*(i?-.25:.25):0;leg.rotation.set(stride-1.35*enter-(i===0?Math.sin(enter*Math.PI)*.65:0),0,0);}}
+      return true;
+    }
+    return{models,receive,update,active,isDriver,canBoard,driverPose,passengerPose,pose,nearest,animateHijack};
   }
   globalThis.LowkeyVehicles={create};
 })();

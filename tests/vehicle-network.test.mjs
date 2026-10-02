@@ -9,7 +9,7 @@ import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import '../world-systems.js';
 
-test('vehicles are shared, proximity-checked, server-driven and freed on disconnect', {timeout:20000}, async()=>{
+test('vehicles are shared, proximity-checked, server-driven and freed on disconnect', {timeout:30000}, async()=>{
   const fixture=await mkdtemp(join(tmpdir(),'lowkey-vehicle-test-'));
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
@@ -50,7 +50,17 @@ test('vehicles are shared, proximity-checked, server-driven and freed on disconn
     assert.equal((await post(observer.cookie,'/api/vehicle',{id:observer.id,action:'enter',vehicleId:carId})).status,200);
     await waitFor(()=>latest(observer)?.vehicles.find(vehicle=>vehicle.id===carId)?.passengerIds?.includes(observer.id));
     await walk(thief,{x:-12,z:5});
+    const quitter=await connect('vehicle_quitter');await walk(quitter,{x:-12,z:5});
+    assert.equal((await post(quitter.cookie,'/api/vehicle',{id:quitter.id,action:'steal',vehicleId:carId})).status,202);
+    quitter.abort.abort();
+    const cancellation=await waitFor(()=>owner.events.find(event=>event.type==='vehicle-hijack-cancel'&&event.thiefId===quitter.id));
+    assert.equal(cancellation.victimId,owner.id,'all clients can clear the interrupted victim animation');
+    await waitFor(()=>{const car=latest(owner)?.vehicles.find(vehicle=>vehicle.id===carId);return car?.driverId===owner.id&&!car.hijacking;});
     assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'steal',vehicleId:carId})).status,202,'nearby player starts a timed hijack');
+    const theft=await waitFor(()=>owner.events.find(event=>event.type==='vehicle-hijack'&&event.thiefId===thief.id));assert.equal(theft.duration,LowkeyWorld.HIJACK_MS);
+    assert.equal((await post(thief.cookie,'/api/combat',{id:thief.id,action:'punch'})).status,409,'hands are occupied during the pulling animation');
+    assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'enter',vehicleId:motoId})).status,409,'cannot board another vehicle during a hijack');
+    assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'steal',vehicleId:carId})).status,409,'cannot start overlapping hijacks');
     await waitFor(()=>latest(thief)?.vehicles.find(vehicle=>vehicle.id===carId)?.driverId===thief.id);
     const ejection=await waitFor(()=>owner.events.find(event=>event.type==='vehicle-exit'&&event.pulled));assert.ok(ejection.impulse.y>0,'hijacked driver gets pulled out');
     await walk(owner,{x:-12,z:5});
@@ -62,6 +72,7 @@ test('vehicles are shared, proximity-checked, server-driven and freed on disconn
     const moving=await waitFor(()=>{const vehicle=latest(observer)?.vehicles.find(vehicle=>vehicle.id===carId);return vehicle?.speed>3&&vehicle.x>before+.5&&vehicle;});
     assert.ok(moving.x<0);
     const impact=await waitFor(()=>owner.events.find(event=>event.type==='vehicle-impact'&&event.targetId===owner.id));assert.ok(impact.impulse.y>=5,'a car impact launches the player into the air');
+    await delay(100);assert.equal(owner.events.filter(event=>event.type==='vehicle-impact'&&event.targetId===owner.id&&event.time===impact.time).length,1,'one collision delivers exactly one impulse');
     await post(thief.cookie,'/api/state',{id:thief.id,sequence:10000,position:{x:40,y:18,z:40}});
     assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'exit'})).status,409,'must brake before exiting');
     await delay(1300);
@@ -73,8 +84,12 @@ test('vehicles are shared, proximity-checked, server-driven and freed on disconn
     await walk(owner,{x:-13.5,z:10.5});
     assert.equal((await post(owner.cookie,'/api/vehicle',{id:owner.id,action:'enter',vehicleId:motoId})).status,200);
     await waitFor(()=>latest(observer)?.vehicles.find(vehicle=>vehicle.id===motoId)?.driverId===owner.id);
+    await walk(thief,{x:-13.5,z:10.5});
+    assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'enter',vehicleId:motoId})).status,200,'second player boards the motorcycle passenger seat');
+    await waitFor(()=>latest(thief)?.vehicles.find(vehicle=>vehicle.id===motoId)?.passengerIds?.includes(thief.id));
     owner.abort.abort();
     await waitFor(()=>latest(observer)?.vehicles.find(vehicle=>vehicle.id===motoId)?.driverId===null);
+    assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'exit'})).status,200,'passenger can exit after driver disconnects');
     assert.equal(logs.includes('[anti-cheat]'),false,'normal driving must not trigger movement protection');
   }finally{
     for(const stream of streams)stream.abort();const stopped=once(child,'exit');child.kill();await stopped;

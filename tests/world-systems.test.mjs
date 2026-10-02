@@ -5,6 +5,17 @@ import vm from 'node:vm';
 import '../world-systems.js';
 const world=globalThis.LowkeyWorld;
 
+test('braking still records a real impact and identifies the obstacle actually hit',()=>{
+  const car={...world.initialVehicles()[0],x:0,z:20,rotation:0,speed:22};
+  world.advanceVehicle(car,{brake:true},.05,[{x:0,z:21.4,hx:2,hz:.2},{x:2,z:20,r:.46,vehicleId:'nearby-moto'}]);
+  assert.equal(car.speed,0);assert.ok(car.collision.speed>8);assert.equal(car.collision.vehicleId,null);
+  const moto={...world.initialVehicles()[1],x:0,z:22};
+  const moving={...car,speed:22,z:20};
+  world.advanceVehicle(moving,{throttle:1},.05,world.vehicleObstacles(moving,[moving,moto]));
+  assert.equal(moving.collision.vehicleId,moto.id);
+  assert.ok(Math.hypot(moving.x-moto.x,moving.z-moto.z)>=1.51);
+});
+
 test('day/night alternates every fifteen minutes, stays synchronized after restart and fades over ten seconds',()=>{
   const day=world.SEGMENT_MS*2;
   assert.equal(world.daylight(day+12000),1);
