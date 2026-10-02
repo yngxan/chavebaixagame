@@ -30,6 +30,11 @@
       part(white,side*32,-.018,4+i*.65,8,.014,.35,0,boxGeo,false);
       part(white,i*.8,-.018,side*36,.42,.014,8,0,boxGeo,false);
     }
+    const safeLine=material(0xd4ff00);safeLine.emissive.set(0x485c00);
+    for(let offset=-30;offset<30;offset+=4){const length=Math.min(2.15,30-offset),middle=offset+length/2;
+      part(safeLine,middle,.205,-30,length,.028,.12,0,boxGeo,false);part(safeLine,middle,.205,30,length,.028,.12,0,boxGeo,false);
+      part(safeLine,-30,.205,middle,.12,.028,length,0,boxGeo,false);part(safeLine,30,.205,middle,.12,.028,length,0,boxGeo,false);
+    }
     for(const b of layout.buildings){
       const c=Math.cos(b.rotation),s=Math.sin(b.rotation),wall=material(b.color),accent=material(b.accent);
       const local=(mat,x,y,z,sx,sy,sz,geo=boxGeo)=>part(mat,b.x+x*c+z*s,.12+y,b.z-x*s+z*c,sx,sy,sz,b.rotation,geo);

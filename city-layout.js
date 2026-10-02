@@ -25,6 +25,8 @@
     roads.push({x:side*76.25,z:0,hx:39.75,hz:ROAD_HALF_WIDTH,axis:'x'});
   }
   const inRect=(x,z,r,padding=0)=>{const c=Math.cos(r.rot||0),s=Math.sin(r.rot||0),dx=x-r.x,dz=z-r.z;return Math.abs(dx*c-dz*s)<=r.hx+padding&&Math.abs(dx*s+dz*c)<=r.hz+padding;};
+  const safeZone={x:0,z:0,hx:30,hz:30};
+  const inSafeZone=position=>Boolean(position&&Math.abs(position.x-safeZone.x)<=safeZone.hx&&Math.abs(position.z-safeZone.z)<=safeZone.hz);
   function groundKind(x,z){
     if(x<bounds.minX||x>bounds.maxX||z<bounds.minZ||z>bounds.maxZ)return null;
     if(Math.abs(x)>MAP_HALF_SIZE||Math.abs(z)>MAP_HALF_SIZE){let floor=null;for(const surface of coast.surfaces)if(inRect(x,z,surface)&&(!floor||surface.y>floor.y))floor=surface;return floor?.kind||null;}
@@ -113,5 +115,5 @@
   for(const side of [-1,1])coast.lamps.push({x:side*8,z:235,y:1.4});
   for(const p of coast.lamps)coast.obstacles.push({x:p.x,z:p.z,r:.085,minY:p.y,maxY:p.y+4.5});
   obstacles.push(...coast.obstacles);
-  globalThis.LowkeyCityLayout={MAP_HALF_SIZE,bounds,coast,roads,surfaces,entrances,buildings,trees,lamps,obstacles,groundKind,inRect,garage,garageBays,garagePoint,boutiques,storePoint};
+  globalThis.LowkeyCityLayout={MAP_HALF_SIZE,bounds,coast,roads,surfaces,entrances,buildings,trees,lamps,obstacles,groundKind,inRect,safeZone,inSafeZone,garage,garageBays,garagePoint,boutiques,storePoint};
 })();

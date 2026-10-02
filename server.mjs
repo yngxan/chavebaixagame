@@ -87,6 +87,7 @@ function notifyVehicleDamage(vehicle,damage,now) {
 }
 const projectiles = new Map();
 const zombiesGame=createZombiesGame({world:LowkeyWorld,players,broadcast,restorePlayers(){for(const player of players.values()){const wasGhost=Boolean(player.ghost);player.health=100;player.ghost=false;const client=clients.get(player.id);if(client){client.deadUntil=0;client.movementCredits=4;client.motionAt=Date.now();if(wasGhost){const x=client.respawnPosition.x,z=client.respawnPosition.z;player.position={x,y:LowkeyWorld.groundHeight(x,z)??0,z};player.walking=false;player.jumping=false;player.speed=0;player.motionTime=Date.now();send(client.response,{type:'weapon-health',targetId:player.id,health:100,ghost:false,respawnPosition:player.position});broadcast({type:'player-ghost',id:player.id,dead:false});broadcast({type:'state',player});}else send(client.response,{type:'weapon-health',targetId:player.id,health:100,ghost:false});}lastKnownVitals.set(player.accountId,{health:100,deadUntil:0,ghost:false});}},damagePlayer(target,damage,zombie){
+  if(LowkeyCityLayout.inSafeZone(target?.position))return;
   const now=Date.now(),client=clients.get(target.id);if(!client||target.ghost)return;
   target.health=Math.max(0,target.health-damage);const died=target.health===0;client.deadUntil=0;client.externalImpulseUntil=died?0:now+1800;client.movementCredits=Math.min(7,(client.movementCredits||0)+2);
   if(died){leaveCorpse(target,now);target.ghost=true;releaseVehicle(target);target.walking=false;target.jumping=false;target.speed=0;target.motionTime=now;lastKnownVitals.set(target.accountId,{health:0,deadUntil:0,ghost:true});send(client.response,{type:'weapon-health',targetId:target.id,health:0,ghost:true,deadUntil:0});broadcast({type:'player-ghost',id:target.id,dead:true});}
@@ -731,7 +732,7 @@ const server = createServer(async (request, response) => {
       player.walking = horizontalDistance > .025;
       player.swimming = LowkeyWorld.isSwimming(nextPosition,now);player.jumping = !player.swimming && data.jumping === true;
       player.voiceEnabled = hasSfuConfig() ? Boolean(client.voiceReady && client.voicePublishSessionId) : Boolean(data.voiceEnabled);
-      player.glockEquipped = Boolean(data.glockEquipped);
+      player.glockEquipped = !LowkeyCityLayout.inSafeZone(nextPosition)&&Boolean(data.glockEquipped);
       player.glockPitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.glockPitch)));
       player.glockAiming = player.glockEquipped && data.glockAiming === true;
       const profileChanged = JSON.stringify([player.name, player.appearance]) !== oldProfile;
@@ -1103,6 +1104,7 @@ const server = createServer(async (request, response) => {
       const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id);
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (client.deadUntil||player.ghost) return json(response, 409, { error: 'Espectadores não podem usar emotes.' });
+      if(LowkeyCityLayout.inSafeZone(player.position))return json(response,409,{error:'A Glock fica bloqueada na área segura.'});
       const weapon = client.weapon, now = Date.now();
       if (weapon.reloadingUntil > now) return json(response, 409, { error: 'A Glock já está recarregando.' });
       if (INFINITE_GLOCK_AMMO) { send(client.response, { type: 'weapon-state', mag: 20, reserve: 120, reloading: false }); response.writeHead(204); return response.end(); }
@@ -1130,6 +1132,7 @@ const server = createServer(async (request, response) => {
       if (player.vehicleId) return json(response, 409, { error: 'Saia do veículo para atacar.' });
       if(client.hijackingVehicleId)return json(response,409,{error:'Aguarde o roubo terminar.'});
       if (client.deadUntil||player.ghost) return json(response, 409, { error: 'Espectadores não podem atacar.' });
+      if(LowkeyCityLayout.inSafeZone(player.position))return json(response,409,{error:'Armas e ataques ficam bloqueados na área segura.'});
       if (action === 'glock') {
         if (player.vehicleId) return json(response, 409, { error: 'Saia do veículo para atacar.' });
         const weapon = client.weapon, now = Date.now();
@@ -1168,7 +1171,7 @@ const server = createServer(async (request, response) => {
         const range = 70, end = { x: origin.x + direction.x * range, y: origin.y + direction.y * range, z: origin.z + direction.z * range };
         let target = null, nearest = zombiesGame.active?(LowkeyWorld.shotBlock(origin,end,[...vehicles.values()])??Infinity):Infinity;
         for (const candidate of combatTargets(id)) {
-          if (candidate.id === id || candidate.health <= 0 || (candidate.position.y < -.2 && !candidate.swimming)) continue;
+          if (candidate.id === id || candidate.health <= 0 || LowkeyCityLayout.inSafeZone(candidate.position) || (candidate.position.y < -.2 && !candidate.swimming)) continue;
           const hit = playerSegmentHit(origin, end, candidate.position, .34);
           if (hit !== null && hit < nearest) { target = candidate; nearest = hit; }
         }
@@ -1212,7 +1215,7 @@ const server = createServer(async (request, response) => {
         const end={x:origin.x+aim.x*reach,y:origin.y+aim.y*reach,z:origin.z+aim.z*reach};
         let target=null,nearest=LowkeyWorld.shotBlock(origin,end,[...vehicles.values()])??Infinity;
         for(const candidate of combatTargets(id)){
-          if(candidate.id===id||candidate.health<=0||candidate.vehicleId)continue;
+          if(candidate.id===id||candidate.health<=0||candidate.vehicleId||LowkeyCityLayout.inSafeZone(candidate.position))continue;
           const hit=playerSegmentHit(origin,end,candidate.position,.36);
           if(hit!==null&&hit<nearest){target=candidate;nearest=hit;}
         }
@@ -1353,7 +1356,7 @@ setInterval(()=>{
       }
     }
     for(const target of players.values()){
-      if(target.vehicleId||target.health<=0||target.id===vehicle.driverId||Math.abs(target.position.y-vehicle.y)>1.25||now-(target.lastVehicleImpactAt||0)<1100)continue;
+      if(LowkeyCityLayout.inSafeZone(vehicle)||LowkeyCityLayout.inSafeZone(target.position)||target.vehicleId||target.health<=0||target.id===vehicle.driverId||Math.abs(target.position.y-vehicle.y)>1.25||now-(target.lastVehicleImpactAt||0)<1100)continue;
       const relative={x:target.position.x-vehicle.x,z:target.position.z-vehicle.z},c=Math.cos(vehicle.rotation),s=Math.sin(vehicle.rotation),localX=relative.x*c-relative.z*s,localZ=relative.x*s+relative.z*c;
       const hit=vehicle.kind==='car'?Math.abs(localX)<1.12&&Math.abs(localZ)<1.86:Math.hypot(localX,localZ)<.60;
       if(!hit||Math.abs(vehicle.speed)<4.5)continue;
@@ -1397,7 +1400,7 @@ setInterval(() => {
     projectile.velocity.y -= 9.8 * dt;
     let hit = null, bestDistance = LowkeyWorld.shotBlock(from,to,[...vehicles.values()])??Infinity;
     for (const target of combatTargets(projectile.ownerId)) {
-      if (target.id === projectile.ownerId || (target.position.y < -.2 && !target.swimming)) continue;
+      if (target.id === projectile.ownerId || LowkeyCityLayout.inSafeZone(target.position) || (target.position.y < -.2 && !target.swimming)) continue;
       const t=playerSegmentHit(from,to,target.position,.43);
       if(t!==null&&t<bestDistance){hit=target;bestDistance=t;}
     }
