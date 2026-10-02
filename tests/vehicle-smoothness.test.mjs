@@ -32,3 +32,16 @@ test('boarding a delayed snapshot predicts to the current frame rather than pack
     for(let i=0;i<60;i++){c.update(1/60,1250+(i+1)*1000/60,1250+(i+1)*1000/60,'player',input,0,new THREE.Vector3());assert.ok(actual.z>=previous,'vehicle advances continuously');previous=actual.z;}
   }
 });
+
+test('airborne snapshots preserve motorcycle height and seated rider positions',()=>{
+  const c=controller(),state={...world.initialVehicles().find(v=>v.kind==='moto'),x:-88,z:-80,y:3,rotation:0,speed:10,driverId:'pilot',passengerIds:['passenger'],airborne:true,airVelocityY:6,airVelocityX:0,airVelocityZ:10,airPitch:.6,airTime:.2,rampCooldown:1};
+  c.receive({vehicles:[state],serverTime:1000},1000,1000);
+  c.update(1/60,1000,1000,'pilot',{throttle:1,steer:0},0,new THREE.Vector3());
+  const model=c.models.get(state.id);assert.ok(model.predicted.y>3);assert.ok(model.group.position.y>3);
+  assert.ok(c.pose(model,'pilot').y>2.8);assert.ok(c.pose(model,'passenger').y>2.8);
+  c.receive({vehicles:[{...state,y:3.4,airVelocityY:4}],serverTime:1100},1200,1200);
+  c.update(1/60,1200,1200,'pilot',{throttle:1,steer:0},0,new THREE.Vector3());assert.ok(model.predicted.y>3);assert.ok(model.predicted.airborne);
+  // A spectator follows the remote snapshot, not a stale local prediction.
+  c.receive({vehicles:[{...state,y:0,airborne:false,airPitch:0,airVelocityY:0}],serverTime:2000},2000,2000);
+  c.update(1/60,2200,2200,'spectator',{throttle:0,steer:0},0,new THREE.Vector3());assert.equal(model.owned,false);
+});

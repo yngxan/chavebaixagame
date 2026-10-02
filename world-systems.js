@@ -36,9 +36,9 @@
     const surface=waterHeight(position.x,position.z,serverTime),target=surface-1.27;
     position.y+=(target-position.y)*(1-Math.exp(-5*dt));return true;
   }
-  const drivingObstacles = [{x:0,z:-11.7,hx:7.1,hz:4.1}];
+  const drivingObstacles = [{x:0,z:-11.7,hx:7.1,hz:4.1,maxY:1.15}];
   for (const [x,z,size] of [[-18,-19,1.5],[-9,-25,1.25],[10,-25,1.35],[21,-18,1.55],[-24,-7,1.4],[24,-3,1.3],[-22,12,1.35],[22,15,1.45],[-13,24,1.45],[1,27,1.3],[14,23,1.55],[-23,4,1.3],[23,9,1.3]]) drivingObstacles.push({x,z,r:.58*size});
-  for (const [x,z,rot] of [[-6,2,Math.PI/2],[6,2,-Math.PI/2],[-5,-4,Math.PI/4],[5,-4,-Math.PI/4]]) drivingObstacles.push({x,z,hx:1.3,hz:.48,rot});
+  for (const [x,z,rot] of [[-6,2,Math.PI/2],[6,2,-Math.PI/2],[-5,-4,Math.PI/4],[5,-4,-Math.PI/4]]) drivingObstacles.push({x,z,hx:1.3,hz:.48,rot,maxY:1.51});
   for (const [x,z] of [[-10,-4],[10,-4],[-10,8],[10,8]]) drivingObstacles.push({x,z,r:.13});
   const combatObstacles=[{x:0,z:-11.7,hx:6.7,hz:3.35,minY:0,maxY:1.15}];
   const standingPlatforms=[{x:0,z:-11.7,hx:6.7,hz:3.35,y:1.15}];
@@ -67,13 +67,14 @@
   }
   function shotBlock(from,to,vehicles=[]){let nearest=null;const obstacles=[...combatObstacles,...vehicles.map(v=>({x:v.x,z:v.z,rot:v.rotation,hx:v.kind==='car'?.86:.2,hz:v.kind==='car'?1.7:.55,minY:v.y+.35,maxY:v.y+(v.kind==='car'?1.65:.95)}))];for(const obstacle of obstacles){const t=boxHit(from,to,obstacle);if(t!==null&&(nearest===null||t<nearest))nearest=t;}return nearest;}
   function crossesSolid(from,to){if(to.y<-.3)return false;for(const obstacle of combatObstacles){if(to.y>=obstacle.maxY-.12||from.y>=obstacle.maxY-.12)continue;const t=boxHit({...from,y:from.y+.75},{...to,y:to.y+.75},obstacle,.18);if(t!==null&&t>.01&&t<.99)return true;}return false;}
-  function clearAt(x, z, radius, obstacles = drivingObstacles) {
+  function clearAt(x, z, radius, obstacles = drivingObstacles,probeHeight=null) {
     const bounds=city.bounds;
     if (x<bounds.minX+1+radius||x>bounds.maxX-1-radius||z<bounds.minZ+1+radius||z>bounds.maxZ-1-radius) return false;
     // The ground depends on the probe, not on each obstacle in the whole city.
     const floor=groundHeight(x,z);if(floor===null)return false;
     for (const obstacle of obstacles) {
-      if(obstacle.minY!==undefined&&(obstacle.minY>floor+1.8||obstacle.maxY<floor+.02))continue;
+      const height=probeHeight??floor;
+      if((obstacle.minY!==undefined&&obstacle.minY>height+1.8)||(obstacle.maxY!==undefined&&obstacle.maxY<height+.02))continue;
       const dx=x-obstacle.x, dz=z-obstacle.z;
       const reach=(obstacle.r??Math.hypot(obstacle.hx,obstacle.hz))+radius;
       if(Math.abs(dx)>reach||Math.abs(dz)>reach)continue;
@@ -115,7 +116,27 @@
   }
   function vehicleClearAt(vehicle,x,z,rotation=vehicle.rotation,obstacles=drivingObstacles){
     const moto=vehicle.kind==='moto',radius=moto?.29:.78;
-    return [-1,0,1].every(side=>clearAt(x+Math.sin(rotation)*side*(moto?.76:1.18),z+Math.cos(rotation)*side*(moto?.76:1.18),radius,obstacles));
+    if(moto)return !motoContact(vehicle,x,z,rotation,obstacles);
+    return [-1,0,1].every(side=>clearAt(x+Math.sin(rotation)*side*(moto?.76:1.18),z+Math.cos(rotation)*side*(moto?.76:1.18),radius,obstacles,vehicle.airborne?vehicle.y:null));
+  }
+  function motoContact(vehicle,x,z,rotation,obstacles){
+    const bounds=city.bounds;if(x<bounds.minX+1.3||x>bounds.maxX-1.3||z<bounds.minZ+1.3||z>bounds.maxZ-1.3||(!vehicle.airborne&&groundHeight(x,z)===null))return{part:'boundary',obstacle:null};
+    const frame=vehicleFrame({...vehicle,x,z,rotation}),angle=-frame.pitch,c=Math.cos(angle),s=Math.sin(angle);
+    // Contact points match the visible wheels and the engine's lower centre.
+    for(const [part,localY,localZ,radius] of [['belly',.48,.08,.30],['rear-wheel',.36,-.85,.36],['front-wheel',.36,.90,.36]]){
+      const y=frame.y+localY*c+localZ*s,forward=localZ*c-localY*s,px=frame.x+Math.sin(rotation)*forward,pz=frame.z+Math.cos(rotation)*forward;
+      for(const obstacle of obstacles){
+        const minY=obstacle.minY??-.05,maxY=obstacle.maxY??Infinity,dy=Math.max(0,minY-y,y-maxY),dx=px-obstacle.x,dz=pz-obstacle.z;
+        // A raised front tyre brushes the rail; the belly/rear contact hooks it.
+        if(part==='front-wheel'&&!vehicle.airborne&&vehicle.wheelieAngle>.24&&obstacle.kind==='rail'&&y-radius>(groundHeight(x,z)??vehicle.y)+.65)continue;
+        if(dy>=radius)continue;
+        let horizontal;
+        if(obstacle.r!==undefined)horizontal=Math.max(0,Math.hypot(dx,dz)-obstacle.r);
+        else{const oc=Math.cos(obstacle.rot||0),os=Math.sin(obstacle.rot||0),lx=dx*oc-dz*os,lz=dx*os+dz*oc;horizontal=Math.hypot(Math.max(0,Math.abs(lx)-obstacle.hx),Math.max(0,Math.abs(lz)-obstacle.hz));}
+        if(horizontal*horizontal+dy*dy<radius*radius)return{part,obstacle,y,lower:y-radius};
+      }
+    }
+    return null;
   }
   function vehicleInteraction(vehicle,position) {
     const dx=position.x-vehicle.x,dz=position.z-vehicle.z,c=Math.cos(vehicle.rotation),s=Math.sin(vehicle.rotation);
@@ -125,6 +146,9 @@
   function advanceVehicle(vehicle, input, dt, obstacles = drivingObstacles) {
     vehicle.collision=null;
     dt=clamp(dt,0,.05);const moto=vehicle.kind==='moto',throttle=clamp(Number(input.throttle)||0,-1,1),steer=clamp(Number(input.steer)||0,-1,1);
+    vehicle.rampCooldown=Math.max(0,(Number(vehicle.rampCooldown)||0)-dt);
+    if(vehicle.submerged){vehicle.speed=0;return vehicle;}
+    if(moto&&vehicle.airborne)return advanceAirborneMoto(vehicle,input,dt,obstacles);
     const maximum=moto?27:22,acceleration=moto?11:9;
     const drifting=Boolean(input.brake&&Math.abs(steer)>.12&&(Math.abs(vehicle.speed)>.5||throttle));vehicle.drifting=drifting;
     if(drifting){vehicle.speed*=Math.exp(-(moto?1.65:1.2)*dt);vehicle.speed=clamp(vehicle.speed+throttle*acceleration*.72*dt,-6,maximum);}
@@ -152,16 +176,55 @@
     for(let step=0;step<steps;step++) {
       const x=vehicle.x+dx/steps,z=vehicle.z+dz/steps;
       const rotation=oldRotation+yawRate*dt*(step+1)/steps;
-      if (!vehicleClearAt(vehicle,x,z,rotation,obstacles)) { const obstacle=vehicleClearAt(vehicle,x,z,rotation,[])?obstacles.find(item=>!vehicleClearAt(vehicle,x,z,rotation,[item])):null;vehicle.collision={vehicleId:obstacle?.vehicleId||null,speed:Math.abs(vehicle.speed)};vehicle.speed=0;vehicle.rotation=oldRotation;vehicle.driftHeading=oldRotation;break; }
+      if (!vehicleClearAt(vehicle,x,z,rotation,obstacles)) {
+        const contact=moto?motoContact(vehicle,x,z,rotation,obstacles):null;
+        const obstacle=contact?.obstacle||(vehicleClearAt(vehicle,x,z,rotation,[])?obstacles.find(item=>!vehicleClearAt(vehicle,x,z,rotation,[item])):null);
+        const top=obstacle?.maxY,ground=groundHeight(vehicle.x,vehicle.z)??vehicle.y;
+        if(moto&&contact?.part!=='front-wheel'&&input.wheelie&&!input.brake&&!vehicle.wrecked&&!vehicle.hijacking&&vehicle.wheelieAngle>.24&&vehicle.speed>5.5&&!vehicle.rampCooldown&&Number.isFinite(top)&&top-ground<=2.5&&top>=ground+.08){
+          launchMoto(vehicle,Math.min(13,4+vehicle.speed*.34),middleRotation);break;
+        }
+        vehicle.collision={vehicleId:obstacle?.vehicleId||null,speed:Math.abs(vehicle.speed)};vehicle.speed=0;vehicle.rotation=oldRotation;vehicle.driftHeading=oldRotation;break;
+      }
+      const floor=groundHeight(x,z),previousFloor=groundHeight(vehicle.x,vehicle.z);
+      if(moto&&input.wheelie&&!input.brake&&!vehicle.wrecked&&!vehicle.hijacking&&vehicle.wheelieAngle>.24&&vehicle.speed>5.5&&!vehicle.rampCooldown&&floor!==null&&previousFloor!==null&&floor-previousFloor>=.09&&floor-previousFloor<=.6){
+        launchMoto(vehicle,Math.min(8,3.8+vehicle.speed*.16),middleRotation);break;
+      }
       vehicle.x=x;vehicle.z=z;
     }
+    if(vehicle.airborne)return vehicle;
     vehicle.y=groundHeight(vehicle.x,vehicle.z)??-.05;
     const wheelieTarget=moto&&input.wheelie&&!input.brake&&!vehicle.collision&&!vehicle.wrecked&&!vehicle.hijacking&&vehicle.speed>2.8&&throttle>=0?.60:0;
     vehicle.wheelieAngle=moto?(Number(vehicle.wheelieAngle)||0)+(wheelieTarget-(Number(vehicle.wheelieAngle)||0))*(1-Math.exp(-(wheelieTarget?6:9)*dt)):0;
     return vehicle;
   }
+  function launchMoto(vehicle,velocity,heading){
+    vehicle.airborne=true;vehicle.airVelocityY=velocity;vehicle.airVelocityX=Math.sin(heading)*vehicle.speed*.96;vehicle.airVelocityZ=Math.cos(heading)*vehicle.speed*.96;
+    vehicle.speed*=.96;vehicle.airPitch=Math.max(.3,vehicle.wheelieAngle||0);vehicle.airTime=0;vehicle.rampCooldown=1.3;
+  }
+  function advanceAirborneMoto(vehicle,input,dt,obstacles){
+    vehicle.airTime=(vehicle.airTime||0)+dt;
+    vehicle.airVelocityY=(vehicle.airVelocityY||0)-12*dt;vehicle.y+=vehicle.airVelocityY*dt;
+    const steer=clamp(Number(input.steer)||0,-1,1);vehicle.rotation+=-steer*.55*dt;vehicle.rotation=Math.atan2(Math.sin(vehicle.rotation),Math.cos(vehicle.rotation));
+    const dx=(vehicle.airVelocityX||0)*dt,dz=(vehicle.airVelocityZ||0)*dt,steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/.12));
+    for(let i=0;i<steps;i++){
+      const x=vehicle.x+dx/steps,z=vehicle.z+dz/steps;
+      if(!vehicleClearAt(vehicle,x,z,vehicle.rotation,obstacles)){
+        const obstacle=obstacles.find(item=>!vehicleClearAt(vehicle,x,z,vehicle.rotation,[item]));
+        // A low launch obstacle holds the rear wheel until the bike clears its top.
+        if(vehicle.airVelocityY>0&&vehicle.airTime<.6&&Number.isFinite(obstacle?.maxY)&&obstacle.maxY-(groundHeight(vehicle.x,vehicle.z)??vehicle.y)<=2.5)break;
+        vehicle.collision={vehicleId:obstacle?.vehicleId||null,speed:Math.abs(vehicle.speed)};vehicle.speed=0;vehicle.airVelocityX=0;vehicle.airVelocityZ=0;break;
+      }
+      vehicle.x=x;vehicle.z=z;
+    }
+    vehicle.airPitch=clamp(Math.atan2(vehicle.airVelocityY,Math.max(7,Math.abs(vehicle.speed)))+.18,-.4,.85);vehicle.wheelieAngle=Math.max(0,vehicle.airPitch);
+    const land=groundHeight(vehicle.x,vehicle.z),floor=land??city.coast.waterY;
+    if(vehicle.y<=floor&&vehicle.airVelocityY<=0){
+      vehicle.y=floor;vehicle.airborne=false;vehicle.submerged=land===null;vehicle.airVelocityY=0;vehicle.airVelocityX=0;vehicle.airVelocityZ=0;vehicle.airPitch=0;vehicle.wheelieAngle=0;vehicle.speed=land===null?0:vehicle.speed*.82;vehicle.driftHeading=vehicle.rotation;vehicle.rampCooldown=.5;
+    }
+    return vehicle;
+  }
   function vehicleFrame(vehicle) {
-    const angle=vehicle.kind==='moto'?clamp(Number(vehicle.wheelieAngle)||0,0,.60):0,shift=-.85*(1-Math.cos(angle))+.36*Math.sin(angle);
+    const angle=vehicle.kind==='moto'?(vehicle.airborne?clamp(Number(vehicle.airPitch)||0,-.4,.85):clamp(Number(vehicle.wheelieAngle)||0,0,.60)):0,shift=-.85*(1-Math.cos(angle))+.36*Math.sin(angle);
     return {x:vehicle.x+Math.sin(vehicle.rotation)*shift,y:vehicle.y+.36*(1-Math.cos(angle))+.85*Math.sin(angle),z:vehicle.z+Math.cos(vehicle.rotation)*shift,pitch:-angle};
   }
   function seatPose(vehicle,offset,scale) {
@@ -184,7 +247,7 @@
     }
     return null;
   }
-  function vehicleObstacles(vehicle,records){return [...drivingObstacles,...[...records].filter(other=>other.id!==vehicle.id).map(other=>({x:other.x,z:other.z,r:other.kind==='car'?1.05:.46,vehicleId:other.id}))];}
+  function vehicleObstacles(vehicle,records){return [...drivingObstacles,...[...records].filter(other=>other.id!==vehicle.id).map(other=>({x:other.x,z:other.z,r:other.kind==='car'?1.05:.46,minY:other.y,maxY:other.y+(other.kind==='car'?1.7:1.1),vehicleId:other.id}))];}
   function hijackPose(vehicle,role,now){
     const action=vehicle.hijacking;if(!action)return null;
     const progress=clamp((now-action.startedAt)/HIJACK_MS,0,1),smooth=t=>{t=clamp(t,0,1);return t*t*(3-2*t);},seat=driverPose(vehicle),outside=action.outside;

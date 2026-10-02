@@ -48,6 +48,18 @@ O arquivo `render.yaml` configura o servidor Node como serviço web gratuito no 
 
 O banco grátis `lowkey-social-accounts` vence em **30 de outubro de 2026**. Migre ou exporte as contas antes dessa data para continuar usando os perfis salvos.
 
+## Polícia e perseguição
+
+A delegacia fica a oeste da praça, em **x -46 / z -18**, substituindo o primeiro Mercado. A entrada está aberta, com recepção e uma cela no fundo.
+
+- Duas viaturas fazem rondas nas ruas, com dois policiais em cada uma; dois outros policiais ficam na delegacia.
+- Disparos aceitos pelo servidor, agressões e ataques aos policiais aumentam a perseguição de uma a cinco estrelas. Requisições rejeitadas não geram crimes.
+- Viaturas perseguem pelas ruas; policiais descem e tentam capturar o suspeito. O nível diminui quando ele fica longe da polícia sem cometer novos crimes.
+- A captura exige proximidade por 1,2 segundo e suspeito a pé ou veículo quase parado. A prisão dura 20 segundos, com contador, movimento e armas bloqueados. Reconectar não elimina a prisão.
+- A praça continua segura. A polícia não captura jogadores nela, e perseguições são suspensas durante Zombies.
+- Policiais revidam disparos validados, com tempo de reação, chance de errar e cadência limitada. Obstáculos e a praça bloqueiam os tiros; agressões sem arma continuam levando à captura. Viaturas de polícia ainda não podem ser dirigidas pelos jogadores.
+- A perseguição usa viaturas mais rápidas, policiais espaçados e a última posição vista. Após perder o suspeito, a primeira estrela diminui depois de 60 segundos sem novos crimes, e as seguintes a cada 20 segundos.
+
 ## Controles
 
 - **WASD** ou setas: andar

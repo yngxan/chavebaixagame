@@ -1,10 +1,10 @@
 (()=>{
   const definitions={
     punch:{id:'punch',name:'SOCO',category:'Desarmado',interval:80,range:2.7,damage:4,icon:'fist'},
-    glock:{id:'glock',name:'GLOCK',category:'Pistola · semiautomática',interval:150,range:70,damage:34,headDamage:100,spread:.0015,bloom:.0017,kick:.024,pellets:1,magazine:20,icon:'pistol'},
-    mp5:{id:'mp5',name:'MP5',category:'Submetralhadora · automática',interval:100,range:62,damage:22,headDamage:66,spread:.0028,bloom:.0018,kick:.014,pellets:1,magazine:30,automatic:true,icon:'smg'},
-    ak47:{id:'ak47',name:'AK-47',category:'Fuzil · automático',interval:130,range:90,damage:36,headDamage:100,spread:.0018,bloom:.003,kick:.034,pellets:1,magazine:30,automatic:true,icon:'rifle'},
-    shotgun:{id:'shotgun',name:'SHOTGUN',category:'Escopeta · ação por bombeamento',interval:850,range:32,damage:12,headDamage:18,spread:.057,bloom:0,kick:.075,pellets:8,magazine:8,icon:'shotgun'},
+    glock:{id:'glock',name:'GLOCK',category:'Pistola · semiautomática',interval:150,range:70,damage:34,headDamage:100,spread:.0015,bloom:.0017,kick:0.0192,pellets:1,magazine:20,icon:'pistol'},
+    mp5:{id:'mp5',name:'MP5',category:'Submetralhadora · automática',interval:100,range:62,damage:22,headDamage:66,spread:.0028,bloom:.0018,kick:0.0112,pellets:1,magazine:30,automatic:true,icon:'smg'},
+    ak47:{id:'ak47',name:'AK-47',category:'Fuzil · automático',interval:130,range:90,damage:36,headDamage:100,spread:.0018,bloom:.003,kick:0.0272,pellets:1,magazine:30,automatic:true,icon:'rifle'},
+    shotgun:{id:'shotgun',name:'SHOTGUN',category:'Escopeta · ação por bombeamento',interval:850,range:32,damage:12,headDamage:18,spread:.057,bloom:0,kick:0.06,pellets:8,magazine:8,icon:'shotgun'},
     knife:{id:'knife',name:'FACA',category:'Corpo a corpo',interval:380,range:2.65,damage:40,icon:'knife'}
   };
   const order=Object.keys(definitions),get=id=>definitions[id]||definitions.punch;

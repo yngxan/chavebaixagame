@@ -85,7 +85,7 @@
       const focus=localPosition||active(localId)?.group.position||new THREE.Vector3(),lit=new Set([...models.values()].filter(m=>m.group.position.distanceTo(focus)<28).sort((a,b)=>a.group.position.distanceToSquared(focus)-b.group.position.distanceToSquared(focus)).slice(0,4).map(m=>m.state.id));
       let collisionStates=null;
       for(const model of models.values()) {
-        const owned=localId&&model.state.driverId===localId;
+        const owned=localId&&model.state.driverId===localId;model.owned=Boolean(owned);
         let pose;
         if(owned) {
           // Only the driver's vehicle runs physics. Remote vehicles just interpolate.
@@ -96,6 +96,8 @@
             for(let i=0;i<steps;i++){LowkeyWorld.advanceVehicle(expected,controls,age/steps,obstacles);if(expected.collision)break;}
             if(Math.hypot(model.predicted.x-expected.x,model.predicted.z-expected.z)>4||model.predicted.driverId!==expected.driverId||model.state.hijacking||model.state.wrecked){model.predicted={...expected};model.correction=null;}
             else model.correction={x:expected.x-model.predicted.x,z:expected.z-model.predicted.z,rotation:Math.atan2(Math.sin(expected.rotation-model.predicted.rotation),Math.cos(expected.rotation-model.predicted.rotation))};
+            if(Boolean(model.predicted.airborne)!==Boolean(expected.airborne)||Math.abs(model.predicted.y-expected.y)>1){model.predicted.y=expected.y;}
+            for(const key of ['airborne','airVelocityX','airVelocityY','airVelocityZ','airPitch','airTime','rampCooldown'])model.predicted[key]=expected[key];
             model.predicted.speed=expected.speed;model.predicted.steering=expected.steering;model.predicted.wheelieAngle=expected.wheelieAngle;model.pending=null;
           }
           const steps=Math.max(1,Math.ceil(dt/.025));
@@ -104,7 +106,7 @@
           pose=model.predicted;
         } else {pose=model.motion.sample(now,dt)||model.state;model.pending=null;}
         model.wheelieAngle=THREE.MathUtils.damp(model.wheelieAngle||0,(owned?model.predicted.wheelieAngle:model.state.wheelieAngle)||0,18,dt);
-        const frame=LowkeyWorld.vehicleFrame({...model.state,x:pose.x,y:pose.y,z:pose.z,rotation:pose.rotation,wheelieAngle:model.wheelieAngle});
+        const frame=LowkeyWorld.vehicleFrame({...model.state,x:pose.x,y:pose.y,z:pose.z,rotation:pose.rotation,wheelieAngle:model.wheelieAngle,airborne:owned?model.predicted.airborne:model.state.airborne,airPitch:owned?model.predicted.airPitch:model.state.airPitch});
         model.group.position.set(frame.x,frame.y,frame.z);model.group.rotation.order='YXZ';model.group.rotation.x=frame.pitch;model.group.rotation.y=pose.rotation;
         const speed=owned?model.predicted.speed:model.state.speed,steer=(owned?model.predicted.steering:model.state.steering)||0;
         model.group.rotation.z=THREE.MathUtils.damp(model.group.rotation.z,model.state.kind==='moto'?Math.max(-.24,Math.min(.24,steer*speed*.013)):0,8,dt);
@@ -117,7 +119,7 @@
     function active(id){if(!id)return null;return [...models.values()].find(model=>model.state.driverId===id||(model.state.passengerIds||[]).includes(id))||null;}
     function isDriver(id,model){return Boolean(id&&model?.state.driverId===id);}
     function canBoard(model){return Boolean(model&&!model.state.wrecked&&!model.state.hijacking&&(!model.state.driverId||(model.state.passengerIds||[]).length<1));}
-    function renderedState(model){const frame=LowkeyWorld.vehicleFrame({...model.state,x:0,y:0,z:0,rotation:model.group.rotation.y,wheelieAngle:model.wheelieAngle});return {...model.state,x:model.group.position.x-frame.x,y:model.group.position.y-frame.y,z:model.group.position.z-frame.z,rotation:model.group.rotation.y,wheelieAngle:model.wheelieAngle};}
+    function renderedState(model){const airPitch=-model.group.rotation.x,airborne=Boolean(model.owned?model.predicted.airborne:model.state.airborne),frame=LowkeyWorld.vehicleFrame({...model.state,x:0,y:0,z:0,rotation:model.group.rotation.y,wheelieAngle:model.wheelieAngle,airborne,airPitch});return {...model.state,x:model.group.position.x-frame.x,y:model.group.position.y-frame.y,z:model.group.position.z-frame.z,rotation:model.group.rotation.y,wheelieAngle:model.wheelieAngle,airborne,airPitch};}
     function driverPose(model){return LowkeyWorld.driverPose(renderedState(model));}
     function passengerPose(model,seat=0){return LowkeyWorld.passengerPose(renderedState(model),seat);}
     function interaction(model,position){return LowkeyWorld.vehicleInteraction(renderedState(model),position);}

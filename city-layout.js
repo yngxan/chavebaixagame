@@ -81,8 +81,14 @@
   const garageBays=[{id:'garage-car',kind:'car',...garagePoint(-3,0),rotation:garage.rotation},{id:'garage-moto',kind:'moto',...garagePoint(3,0),rotation:garage.rotation}];
   const boutiques=buildings.filter(b=>b.shopName==='BOUTIQUE');
   const storePoint=(b,x,z)=>({x:b.x+x*Math.cos(b.rotation)+z*Math.sin(b.rotation),z:b.z-x*Math.sin(b.rotation)+z*Math.cos(b.rotation)});
+  const policeStation=buildings.find(b=>b.shopName==='MERCADO');
+  policeStation.kind='police';policeStation.shopName='DELEGACIA';policeStation.color=0xd1dbe0;policeStation.accent=0x315b9c;
+  const policePoint=(x,z)=>storePoint(policeStation,x,z);
+  const jail={...policePoint(4,-3.8),y:.12},jailExit={...policePoint(0,8),y:.12};
+  entrances.push({x:policeStation.x,z:policeStation.z,hx:7.5,hz:6.5,rot:policeStation.rotation,y:.12,kind:'police',ground:true},{...policePoint(0,7.5),hx:1.5,hz:1.2,rot:policeStation.rotation,y:.12,kind:'police-access',ground:true});
   for(const b of boutiques){b.kind='boutique';entrances.push({x:b.x,z:b.z,hx:7.5,hz:6.5,rot:b.rotation,y:.12,kind:'boutique',ground:true},{...storePoint(b,0,7.5),hx:1.4,hz:1.1,rot:b.rotation,y:.12,kind:'boutique-access',ground:true});}
-  const obstacles=buildings.filter(b=>b!==garage&&b.kind!=='boutique').map(b=>({x:b.x,z:b.z,hx:b.width/2,hz:b.depth/2,rot:b.rotation,minY:.12,maxY:b.height+(b.kind==='house'?2.32:.8)}));
+  const obstacles=buildings.filter(b=>b!==garage&&b.kind!=='boutique'&&b.kind!=='police').map(b=>({x:b.x,z:b.z,hx:b.width/2,hz:b.depth/2,rot:b.rotation,minY:.12,maxY:b.height+(b.kind==='house'?2.32:.8)}));
+  for(const [x,z,hx,hz,minY,maxY] of [[-7.35,0,.15,6.5,.12,4.52],[7.35,0,.15,6.5,.12,4.52],[0,-6.35,7.5,.15,.12,4.52],[-4.5,6.35,3,.15,.12,4.52],[4.5,6.35,3,.15,.12,4.52],[0,6.35,1.5,.15,3.3,4.52],[0,0,7.5,6.5,4.4,4.7],[1.9,-3.8,.08,2.5,.12,3.5],[4.6,-1.3,2.65,.08,.12,3.5],[-3,-1.5,1.4,.65,.12,1.15]])obstacles.push({...policePoint(x,z),hx,hz,rot:policeStation.rotation,minY,maxY,kind:'police-wall'});
   for(const b of boutiques)for(const [x,z,hx,hz,minY,maxY] of [[-7.35,0,.15,6.5,.12,4.52],[7.35,0,.15,6.5,.12,4.52],[0,-6.35,7.5,.15,.12,4.52],[-4.4,6.35,3.1,.15,.12,4.52],[4.4,6.35,3.1,.15,.12,4.52],[0,6.35,1.3,.15,3.3,4.52],[0,0,7.5,6.5,4.4,4.7],[-2.7,-.7,1.1,1.3,.12,1.1],[2.7,-.7,1.1,1.3,.12,1.1],[4.6,-4.7,1.6,.65,.12,1.2]])obstacles.push({...storePoint(b,x,z),hx,hz,rot:b.rotation,minY,maxY,kind:'boutique-fixture'});
   for(const [x,z,hx,hz,minY,maxY] of [[-7.35,0,.15,6.5,.12,4.52],[7.35,0,.15,6.5,.12,4.52],[0,-6.35,7.5,.15,.12,4.52],[0,6.35,7.5,.15,3.75,4.52],[0,0,7.5,6.5,4.4,4.7]])obstacles.push({...garagePoint(x,z),hx,hz,rot:garage.rotation,minY,maxY,kind:'garage-wall'});
   obstacles.push(...trees.map(t=>({x:t.x,z:t.z,r:.26*t.size,minY:.12,maxY:3.8*t.size})),...lamps.map(l=>({x:l.x,z:l.z,r:.10,minY:.12,maxY:4.8})));
@@ -115,5 +121,5 @@
   for(const side of [-1,1])coast.lamps.push({x:side*8,z:235,y:1.4});
   for(const p of coast.lamps)coast.obstacles.push({x:p.x,z:p.z,r:.085,minY:p.y,maxY:p.y+4.5});
   obstacles.push(...coast.obstacles);
-  globalThis.LowkeyCityLayout={MAP_HALF_SIZE,bounds,coast,roads,surfaces,entrances,buildings,trees,lamps,obstacles,groundKind,inRect,safeZone,inSafeZone,garage,garageBays,garagePoint,boutiques,storePoint};
+  globalThis.LowkeyCityLayout={MAP_HALF_SIZE,bounds,coast,roads,surfaces,entrances,buildings,trees,lamps,obstacles,groundKind,inRect,safeZone,inSafeZone,garage,garageBays,garagePoint,boutiques,storePoint,policeStation,policePoint,jail,jailExit};
 })();

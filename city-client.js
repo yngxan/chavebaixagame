@@ -39,6 +39,19 @@
       const c=Math.cos(b.rotation),s=Math.sin(b.rotation),wall=material(b.color),accent=material(b.accent);
       const local=(mat,x,y,z,sx,sy,sz,geo=boxGeo)=>part(mat,b.x+x*c+z*s,.12+y,b.z-x*s+z*c,sx,sy,sz,b.rotation,geo);
       const w=b.width,d=b.depth,h=b.height;
+      if(b.kind==='police'){
+        local(wall,-7.35,h/2,0,.3,h,d);local(wall,7.35,h/2,0,.3,h,d);local(wall,0,h/2,-6.35,w,h,.3);local(roofFlat,0,h+.1,0,w+.4,.2,d+.4);local(pavement,0,-.04,0,w,.08,d);
+        for(const x of [-4.5,4.5]){local(wall,x,1.7,6.35,6,3.4,.3);local(glass,x,1.8,6.53,4.5,1.65,.04);}
+        local(accent,0,3.86,6.35,w,1.1,.3);for(const x of [-1.5,1.5])local(trim,x,1.6,6.35,.1,3.2,.2);
+        for(let z=-6.2;z<=-1.3;z+=.35)local(dark,1.9,1.65,z,.06,3.3,.06);
+        for(let x=2;x<=7.2;x+=.35)local(dark,x,1.65,-1.3,.06,3.3,.06);
+        for(const y of [.45,2.9]){local(dark,1.9,y,-3.8,.07,.07,5);local(dark,4.6,y,-1.3,5.3,.07,.07);}
+        local(dark,5,.4,-5.2,2.7,.55,1.3);local(white,5,.73,-5.2,2.6,.12,1.2);local(wood,-3,.51,-1.5,2.8,1.02,1.3);local(dark,-3,1.2,-1.5,.7,.35,.3);
+        for(const x of [-4,0,4])local(lamp,x,4.1,0,1.8,.07,.5);
+        if(signMaterial){for(const [text,x,y,z,width,height] of [['DELEGACIA',0,4,6.55,7,.7],['CELA',4.6,3.45,-1.18,1.6,.38],['POLÍCIA LOWKEY',-3,2.9,-6.13,3.6,.6]]){const p=layout.storePoint(b,x,z),sign=new THREE.Mesh(new THREE.PlaneGeometry(width,height),signMaterial([text],'#1b2b43','#f4f6da'));sign.position.set(p.x,y,p.z);sign.rotation.y=b.rotation;group.add(sign);}}
+        const lightPoint=layout.storePoint(b,0,-1),interiorLight=new THREE.PointLight(0xffe4b0,12,15,2);interiorLight.position.set(lightPoint.x,3.9,lightPoint.z);interiorLight.castShadow=false;group.add(interiorLight);
+        continue;
+      }
       if(b.kind==='boutique'){
         local(wall,-7.35,h/2,0,.3,h,d);local(wall,7.35,h/2,0,.3,h,d);local(wood,0,h/2,-6.35,w,h,.3);local(roofFlat,0,h+.1,0,w+.4,.2,d+.4);
         local(wood,0,-.04,0,w,.08,d);
