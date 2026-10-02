@@ -1370,6 +1370,8 @@ setInterval(()=>{
     if(vehicle.hijacking)for(const [role,id] of [['thief',vehicle.hijacking.thiefId],['victim',vehicle.hijacking.victimId]]){const occupant=players.get(id),pose=LowkeyWorld.hijackPose(vehicle,role,now);if(occupant&&pose){occupant.position={x:pose.x,y:pose.y,z:pose.z};occupant.rotation=pose.rotation;occupant.walking=false;occupant.motionTime=now;}}
   }
   if(LowkeyWorld.replenishGarage(vehicles,now).length)changed=true;
+  const expiredVehicles=LowkeyWorld.expireUnoccupiedVehicles(vehicles,now);
+  if(expiredVehicles.length){for(const id of expiredVehicles)vehicleInputs.delete(id);changed=true;}
   if(changed||(occupied&&now-lastVehicleBroadcast>=100)){lastVehicleBroadcast=now;broadcast({type:'world-state',...worldSnapshot()});}
 },50).unref();
 setInterval(()=>broadcast({type:'world-time',serverTime:Date.now(),segmentMs:LowkeyWorld.SEGMENT_MS}),30000).unref();

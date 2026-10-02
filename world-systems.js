@@ -94,11 +94,24 @@
   function replenishGarage(records,now){
     const added=[];for(const bay of city.garageBays){const stock=[...records.values()].find(v=>v.garageBay===bay.id);
       if(stock&&!stock.wrecked&&Math.hypot(stock.x-bay.x,stock.z-bay.z)<5)continue;
+      if(stock)stock.garageBay=null;
       // Do not spawn a replacement on top of a parked or abandoned vehicle.
       if([...records.values()].some(v=>Math.hypot(v.x-bay.x,v.z-bay.z)<(v.kind==='car'?2.9:1.7)))continue;
       if(records.size>=48){const unused=[...records.values()].find(v=>v.id.startsWith('garage-')&&!v.garageBay&&!v.driverId&&!v.passengerIds?.length&&!v.hijacking);if(!unused)continue;records.delete(unused.id);}
-      if(stock)stock.garageBay=null;const id=bay.id+'-'+now+'-'+records.size,next=garageVehicle(bay,id);records.set(id,next);added.push(next);
+      const id=bay.id+'-'+now+'-'+records.size,next=garageVehicle(bay,id);records.set(id,next);added.push(next);
     }return added;
+  }
+  function expireUnoccupiedVehicles(records,now,timeout=180000){
+    const expired=[];
+    for(const [id,vehicle] of records){
+      if(vehicle.garageBay||vehicle.hijacking)continue;
+      const occupied=Boolean(vehicle.driverId||vehicle.passengerIds?.some(Boolean));
+      if(occupied){delete vehicle.unoccupiedSince;continue;}
+      if(!Number.isFinite(vehicle.unoccupiedSince)){vehicle.unoccupiedSince=now;continue;}
+      if(now-vehicle.unoccupiedSince<timeout)continue;
+      records.delete(id);expired.push(id);
+    }
+    return expired;
   }
   function vehicleClearAt(vehicle,x,z,rotation=vehicle.rotation,obstacles=drivingObstacles){
     const moto=vehicle.kind==='moto',radius=moto?.29:.78;
@@ -187,5 +200,5 @@
     const face=Math.atan2(seat.x-approach.x,seat.z-approach.z),turn=Math.atan2(Math.sin(vehicle.rotation-face),Math.cos(vehicle.rotation-face));
     return {...position,rotation:face+turn*enter,scale:1+(seat.scale-1)*enter,progress,pull:smooth((progress-.32)/.38),enter};
   }
-  globalThis.LowkeyWorld={MAP_HALF_SIZE,city,SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,waterHeight,waterAt,isSwimming,advanceSwimmer,keepCameraAboveGround,constrainCamera,shotBlock,crossesSolid,initialVehicles,garageVehicle,replenishGarage,vehicleClearAt,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose};
+  globalThis.LowkeyWorld={MAP_HALF_SIZE,city,SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,waterHeight,waterAt,isSwimming,advanceSwimmer,keepCameraAboveGround,constrainCamera,shotBlock,crossesSolid,initialVehicles,garageVehicle,replenishGarage,expireUnoccupiedVehicles,vehicleClearAt,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose};
 })();
