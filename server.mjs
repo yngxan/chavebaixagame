@@ -70,10 +70,11 @@ function notifyVehicleDamage(vehicle,damage,now) {
   broadcast(message);
 }
 const projectiles = new Map();
-const zombiesGame=createZombiesGame({world:LowkeyWorld,players,broadcast,restorePlayers(){for(const player of players.values()){player.health=100;const client=clients.get(player.id);if(client){client.deadUntil=0;send(client.response,{type:'weapon-health',targetId:player.id,health:100});}}},damagePlayer(target,damage,zombie){
-  const now=Date.now(),client=clients.get(target.id);if(!client||client.deadUntil)return;
-  target.health=Math.max(0,target.health-damage);client.deadUntil=target.health<=0?now+2200:0;client.externalImpulseUntil=now+1800;client.movementCredits=Math.min(7,(client.movementCredits||0)+2);
-  send(client.response,{type:'weapon-health',targetId:target.id,health:target.health,deadUntil:client.deadUntil,impulse:{x:Math.sin(zombie.rotation)*2,z:Math.cos(zombie.rotation)*2,y:2.4}});
+const zombiesGame=createZombiesGame({world:LowkeyWorld,players,broadcast,restorePlayers(){for(const player of players.values()){const wasGhost=Boolean(player.ghost);player.health=100;player.ghost=false;const client=clients.get(player.id);if(client){client.deadUntil=0;client.movementCredits=4;client.motionAt=Date.now();if(wasGhost){const x=client.respawnPosition.x,z=client.respawnPosition.z;player.position={x,y:LowkeyWorld.groundHeight(x,z)??0,z};player.walking=false;player.jumping=false;player.speed=0;player.motionTime=Date.now();send(client.response,{type:'weapon-health',targetId:player.id,health:100,ghost:false,respawnPosition:player.position});broadcast({type:'player-ghost',id:player.id,dead:false});broadcast({type:'state',player});}else send(client.response,{type:'weapon-health',targetId:player.id,health:100,ghost:false});}lastKnownVitals.set(player.accountId,{health:100,deadUntil:0,ghost:false});}},damagePlayer(target,damage,zombie){
+  const now=Date.now(),client=clients.get(target.id);if(!client||target.ghost)return;
+  target.health=Math.max(0,target.health-damage);const died=target.health===0;client.deadUntil=0;client.externalImpulseUntil=died?0:now+1800;client.movementCredits=Math.min(7,(client.movementCredits||0)+2);
+  if(died){target.ghost=true;releaseVehicle(target);target.walking=false;target.jumping=false;target.speed=0;target.motionTime=now;lastKnownVitals.set(target.accountId,{health:0,deadUntil:0,ghost:true});send(client.response,{type:'weapon-health',targetId:target.id,health:0,ghost:true,deadUntil:0});broadcast({type:'player-ghost',id:target.id,dead:true});}
+  else send(client.response,{type:'weapon-health',targetId:target.id,health:target.health,impulse:{x:Math.sin(zombie.rotation)*2,z:Math.cos(zombie.rotation)*2,y:2.4}});
   broadcast({type:'zombie-player-hit',targetId:target.id,time:now});
 }});
 function combatTargets(id){return [...(zombiesGame.active?zombiesGame.zombies.values():players.values())].filter(target=>target.id!==id&&target.health>0&&(!target.enemy||Date.now()>=target.spawnAt+1600));}
@@ -365,7 +366,7 @@ function closeRoomClient(id,reason=null){
   clients.delete(id);
   for(const vehicle of vehicles.values())if(vehicle.hijacking?.thiefId===id||vehicle.hijacking?.victimId===id)cancelVehicleHijack(vehicle);
   const riding=Boolean(player?.vehicleId);releaseVehicle(player);
-  if(player){lastKnownVitals.set(player.accountId,{health:player.health,deadUntil:client.deadUntil});lastKnownPositions.set(player.accountId,{...player.position});}
+  if(player){lastKnownVitals.set(player.accountId,{health:player.health,deadUntil:client.deadUntil,ghost:Boolean(player.ghost)});lastKnownPositions.set(player.accountId,{...player.position});}
   void queueVoiceMutation(client,()=>cleanupSfuClient(client));players.delete(id);client.response.end();broadcast({type:'leave',id});if(riding)broadcast({type:'world-state',...worldSnapshot()});
 }
 async function setAccountBanned(account,ban){
@@ -603,7 +604,8 @@ const server = createServer(async (request, response) => {
     if (connectionsFromAddress >= 8) return json(response, 429, { error: 'Este endereço já tem muitas conexões ativas na praça.' });
     if (clients.size >= MAX_PLAYERS) return json(response, 503, { error: 'Sala cheia (limite: 32 jogadores).' });
     const id = randomUUID();
-    const existingPlayers = [...players.values()];
+    const savedVitals=lastKnownVitals.get(authenticatedAccount.id),willJoinAsGhost=Boolean(zombiesGame.active&&savedVitals?.health<=0&&savedVitals?.ghost);
+    const existingPlayers = [...players.values()].filter(existing=>!existing.ghost||willJoinAsGhost);
     const angle = existingPlayers.length * 2.399;
     const radius = 2.8 + Math.floor(existingPlayers.length / 10) * 0.5;
     const profile = cleanProfile(authenticatedAccount.profile, authenticatedAccount.username.toUpperCase());
@@ -611,7 +613,7 @@ const server = createServer(async (request, response) => {
       id, accountId: authenticatedAccount.id, username:authenticatedAccount.username, name: profile.name, appearance: profile.appearance,
       position: lastKnownPositions.get(authenticatedAccount.id) || { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false, voiceSessionId: null, health: 100, glockEquipped: false, vehicleId:null,vehicleSeat:null,lastVehicleImpactAt:0,
     };
-    const savedVitals=lastKnownVitals.get(authenticatedAccount.id);if(savedVitals)player.health=savedVitals.health;
+    if(savedVitals){player.health=savedVitals.health;player.ghost=Boolean(zombiesGame.active&&savedVitals.ghost&&savedVitals.health<=0);}
     response.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
@@ -623,11 +625,11 @@ const server = createServer(async (request, response) => {
     players.set(id, player);
     clients.get(id).compactMotion = url.searchParams.get('motion') === '2';
     clients.get(id).playerId = id;
-    if(savedVitals)clients.get(id).deadUntil=savedVitals.deadUntil;
-    send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: stageSnapshot(authenticatedAccount.id), weapon: { mag: 20, reserve: 120, reloading: false }, health: player.health,deadUntil:clients.get(id).deadUntil });
+    if(savedVitals)clients.get(id).deadUntil=player.ghost?0:savedVitals.deadUntil;
+    send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: stageSnapshot(authenticatedAccount.id), weapon: { mag: 20, reserve: 120, reloading: false }, health: player.health,deadUntil:clients.get(id).deadUntil,ghost:player.ghost,zombiesMode:zombiesGame.active });
     send(response, {type:'world-state',...worldSnapshot()});
     send(response,zombiesGame.snapshot());
-    broadcast({ type: 'join', player }, id);
+    for(const [recipientId,recipient] of clients)if(recipientId!==id&&(!player.ghost||players.get(recipientId)?.ghost))send(recipient.response,{type:'join',player});
     response.on('close', () => {
       const current = clients.get(id);
       if (!current || current.response !== response) return;
@@ -645,18 +647,33 @@ const server = createServer(async (request, response) => {
       const now = Date.now();
       if(client.hijackingVehicleId){response.writeHead(204);return response.end();}
       if(player.vehicleId){response.writeHead(204);return response.end();}
+      if(player.ghost&&zombiesGame.active){
+        const sequence=data.sequence;if(Number.isSafeInteger(sequence)&&sequence>=0&&sequence<=client.lastStateSequence){response.writeHead(204);return response.end();}
+        if(now-client.lastStateAt<24){response.writeHead(204);return response.end();}
+        if(Number.isSafeInteger(sequence)&&sequence>=0)client.lastStateSequence=sequence;client.lastStateAt=now;
+        const position=data.position||{};if(![position.x,position.y,position.z].every(Number.isFinite))return noteMovementViolation(client,response,'posição de espectador inválida');
+        const next={x:position.x,y:position.y,z:position.z};if(Math.abs(next.x)>49||Math.abs(next.z)>49||next.y<-1||next.y>38)return noteMovementViolation(client,response,'limite do voo espectador');
+        const elapsed=Math.min(.6,Math.max(.024,(now-client.motionAt)/1000)),distance3d=Math.hypot(next.x-player.position.x,next.y-player.position.y,next.z-player.position.z);
+        if(distance3d>10*elapsed+1.25)return noteMovementViolation(client,response,'velocidade do voo espectador');
+        const floor=LowkeyWorld.groundHeight(next.x,next.z);if(floor!==null)next.y=Math.max(next.y,floor+.42);
+        player.position=next;player.rotation=Math.atan2(Math.sin(finite(data.rotation,player.rotation)),Math.cos(finite(data.rotation,player.rotation)));player.motionTime=now;player.walking=false;player.jumping=true;player.speed=0;client.motionAt=now;lastKnownPositions.set(player.accountId,{...next});
+        const {accountId:privateAccountId,...spectatorMotion}=player;for(const [recipientId,recipient] of clients)if(players.get(recipientId)?.ghost)send(recipient.response,{type:'state',player:spectatorMotion});
+        response.writeHead(204);return response.end();
+      }
       if (client.deadUntil) {
         if (now < client.deadUntil) { response.writeHead(204); return response.end(); }
         client.deadUntil = 0;
         player.position = { ...client.respawnPosition };
         lastKnownPositions.set(client.accountId, player.position);
         player.health = 100;
+        player.ghost=false;
         player.walking = false;
         player.jumping = false;
         player.speed = 0;
         player.motionTime = now;
         player.motionReset = (player.motionReset || 0) + 1;
-        send(client.response, { type: 'weapon-health', targetId: player.id, health: 100, respawnPosition: player.position });
+        send(client.response, { type: 'weapon-health', targetId: player.id, health: 100, ghost:false, respawnPosition: player.position });
+        broadcast({type:'player-ghost',id:player.id,dead:false});
         broadcast({ type: 'state', player }, player.id);
         response.writeHead(204);
         return response.end();
@@ -708,7 +725,7 @@ const server = createServer(async (request, response) => {
       player.glockAiming = player.glockEquipped && data.glockAiming === true;
       const profileChanged = JSON.stringify([player.name, player.appearance]) !== oldProfile;
       const { appearance: fullAppearance, name: fullName, accountId: privateAccountId, ...motion } = player;
-      for (const [recipientId, recipient] of clients) if (recipientId !== player.id) {
+      for (const [recipientId, recipient] of clients) if (recipientId !== player.id&&(!player.ghost||players.get(recipientId)?.ghost)) {
         send(recipient.response, { type: 'state', player: profileChanged || !recipient.compactMotion ? { ...motion, name: fullName, appearance: fullAppearance } : motion });
       }
       response.writeHead(204);
@@ -723,7 +740,7 @@ const server = createServer(async (request, response) => {
     try {
       const data=await readJson(request,2048),player=players.get(String(data.id||'')),client=clients.get(String(data.id||'')),now=Date.now();
       if(!player||!client||client.accountId!==authenticatedAccount.id)return json(response,401,{error:'Jogador não conectado.'});
-      if(client.deadUntil)return json(response,409,{error:'Espere voltar à praça.'});
+      if(client.deadUntil||player.ghost)return json(response,409,{error:'Espectadores não podem usar veículos.'});
       let action=data.action,boarding=null;
       if(['interact','enter','steal'].includes(action)) {
         if(client.hijackingVehicleId)return json(response,409,{error:'Aguarde o roubo terminar.'});
@@ -1050,7 +1067,7 @@ const server = createServer(async (request, response) => {
     try {
       const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id);
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
-      if (client.deadUntil) return json(response, 409, { error: 'Espere voltar à praça.' });
+      if (client.deadUntil||player.ghost) return json(response, 409, { error: 'Espectadores não podem usar emotes.' });
       const weapon = client.weapon, now = Date.now();
       if (weapon.reloadingUntil > now) return json(response, 409, { error: 'A Glock já está recarregando.' });
       if (INFINITE_GLOCK_AMMO) { send(client.response, { type: 'weapon-state', mag: 20, reserve: 120, reloading: false }); response.writeHead(204); return response.end(); }
@@ -1077,7 +1094,7 @@ const server = createServer(async (request, response) => {
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (player.vehicleId) return json(response, 409, { error: 'Saia do veículo para atacar.' });
       if(client.hijackingVehicleId)return json(response,409,{error:'Aguarde o roubo terminar.'});
-      if (client.deadUntil) return json(response, 409, { error: 'Espere voltar à praça.' });
+      if (client.deadUntil||player.ghost) return json(response, 409, { error: 'Espectadores não podem atacar.' });
       if (action === 'glock') {
         if (player.vehicleId) return json(response, 409, { error: 'Saia do veículo para atacar.' });
         const weapon = client.weapon, now = Date.now();
@@ -1303,8 +1320,10 @@ setInterval(()=>{
       const hit=vehicle.kind==='car'?Math.abs(localX)<1.12&&Math.abs(localZ)<1.86:Math.hypot(localX,localZ)<.60;
       if(!hit||Math.abs(vehicle.speed)<4.5)continue;
       const direction=Math.sign(vehicle.speed)||1,damage=vehicle.kind==='car'?38:23,impulse={x:Math.sin(vehicle.rotation)*direction*Math.min(11,4.5+Math.abs(vehicle.speed)*.32),y:Math.min(10,5+Math.abs(vehicle.speed)*.20),z:Math.cos(vehicle.rotation)*direction*Math.min(11,4.5+Math.abs(vehicle.speed)*.32)};
-      target.lastVehicleImpactAt=now;target.health=Math.max(0,target.health-damage);const targetClient=clients.get(target.id),deadUntil=target.health===0?now+2200:0;
-      if(targetClient){targetClient.movementCredits=5;targetClient.motionAt=now;if(deadUntil)targetClient.deadUntil=deadUntil;send(targetClient.response,{type:'weapon-health',targetId:target.id,health:target.health,deadUntil});}
+      target.lastVehicleImpactAt=now;target.health=Math.max(0,target.health-damage);const targetClient=clients.get(target.id),died=target.health===0,ghostDeath=died&&zombiesGame.active,deadUntil=died&&!ghostDeath?now+2200:0;
+      if(ghostDeath){target.ghost=true;releaseVehicle(target);target.walking=false;target.jumping=false;target.speed=0;target.motionTime=now;lastKnownVitals.set(target.accountId,{health:0,deadUntil:0,ghost:true});}
+      if(targetClient){targetClient.movementCredits=5;targetClient.motionAt=now;if(deadUntil)targetClient.deadUntil=deadUntil;send(targetClient.response,{type:'weapon-health',targetId:target.id,health:target.health,deadUntil,ghost:ghostDeath});}
+      if(ghostDeath)broadcast({type:'player-ghost',id:target.id,dead:true});
       broadcast({type:'vehicle-impact',vehicleId:vehicle.id,kind:vehicle.kind,targetId:target.id,damage,impulse,time:now});if(deadUntil)broadcast({type:'glock-elimination',shooterId:player.id,targetId:target.id,headshot:false,time:now});changed=true;
     }
     const driverPose=LowkeyWorld.driverPose(vehicle);player.position={x:driverPose.x,y:driverPose.y,z:driverPose.z};player.rotation=driverPose.rotation;player.speed=Math.abs(vehicle.speed);player.walking=false;player.jumping=false;player.motionTime=now;player.vehicleSeat='driver';lastKnownPositions.set(player.accountId,player.position);

@@ -26,6 +26,7 @@
     else{combatObstacles.push({...obstacle,hx:1.25,hz:.09,offsetZ:-.27,minY:.61,maxY:1.51});standingPlatforms.push({...obstacle,hx:1.25,hz:.36,y:.66});}
   }
   function supportHeight(x,z){let height=groundHeight(x,z);if(height===null)return null;for(const p of standingPlatforms){const c=Math.cos(p.rot||0),s=Math.sin(p.rot||0),dx=x-p.x,dz=z-p.z;if(Math.abs(dx*c-dz*s)<=p.hx+.1&&Math.abs(dx*s+dz*c)<=p.hz+.1)height=Math.max(height,p.y);}return height;}
+  function keepCameraAboveGround(position,clearance=.32){const floor=supportHeight(position.x,position.z)??-.05;if(position.y<floor+clearance)position.y=floor+clearance;return position;}
   function boxHit(from,to,obstacle,padding=0){
     const c=Math.cos(obstacle.rot||0),s=Math.sin(obstacle.rot||0);
     const transform=p=>[(p.x-obstacle.x)*c-(p.z-obstacle.z)*s,(p.y), (p.x-obstacle.x)*s+(p.z-obstacle.z)*c-(obstacle.offsetZ||0)];
@@ -128,5 +129,5 @@
     const face=Math.atan2(seat.x-approach.x,seat.z-approach.z),turn=Math.atan2(Math.sin(vehicle.rotation-face),Math.cos(vehicle.rotation-face));
     return {...position,rotation:face+turn*enter,scale:1+(seat.scale-1)*enter,progress,pull:smooth((progress-.32)/.38),enter};
   }
-  globalThis.LowkeyWorld={SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,shotBlock,crossesSolid,initialVehicles,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose};
+  globalThis.LowkeyWorld={SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,keepCameraAboveGround,shotBlock,crossesSolid,initialVehicles,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose};
 })();

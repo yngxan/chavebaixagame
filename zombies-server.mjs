@@ -12,10 +12,10 @@ export function createZombiesGame({world,players,broadcast,damagePlayer,restoreP
     announce(`ZOMBIES · ROUND ${state.round} · ${state.total} zumbis`);broadcast(snapshot());
   }
   function start(accountId){
-    if(state.active)return {started:false,state:meta()};
+    if(state.active&&state.phase!=='gameover')return {started:false,state:meta()};
     zombies.clear();ownerId=accountId;state={active:true,phase:'fighting',round:0,total:0,pending:0,kills:0,nextRoundAt:0};lastAt=clock();restorePlayers();nextRound(lastAt);return {started:true,state:meta()};
   }
-  function stop(reason='Modo Zombies encerrado.') {state.active=false;state.phase='idle';state.pending=0;state.nextRoundAt=0;zombies.clear();announce(reason);broadcast(snapshot());}
+  function stop(reason='Modo Zombies encerrado.') {const wasActive=state.active;state.active=false;state.phase='idle';state.pending=0;state.nextRoundAt=0;zombies.clear();if(wasActive)restorePlayers();announce(reason);broadcast(snapshot());}
   function hurt(id,damage,attackerId,impulse=null){
     const zombie=zombies.get(id);if(!state.active||!zombie||zombie.health<=0||clock()<zombie.spawnAt+1600)return false;
     zombie.health=Math.max(0,zombie.health-Math.min(100,Math.max(0,damage)));
@@ -37,7 +37,12 @@ export function createZombiesGame({world,players,broadcast,damagePlayer,restoreP
     const now=clock(),dt=Math.max(0,Math.min(.1,(now-lastAt)/1000));lastAt=now;if(!state.active)return;
     if(!players.size){stop('Zombies encerrado: a sala ficou vazia.');return;}
     const humans=[...players.values()].filter(p=>p.health>0&&p.position.y>=-.3&&world.groundHeight(p.position.x,p.position.z)!==null);
-    if(![...players.values()].some(p=>p.health>0)){stop(`FIM DE JOGO · ROUND ${state.round} · ${state.kills} eliminações. Digite /zombies para jogar de novo.`);return;}
+    if(![...players.values()].some(p=>p.health>0)){
+      if(state.phase!=='gameover'){state.phase='gameover';state.pending=0;announce(`FIM DE JOGO · ROUND ${state.round} · ${state.kills} eliminações. Digite /zombies para jogar de novo.`);broadcast(snapshot());}
+      if(now-lastBroadcast>=100){lastBroadcast=now;broadcast({type:'zombies-motion',serverTime:now,state:meta(),zombies:[...zombies.values()].map(z=>[z.id,z.position.x,z.position.y,z.position.z,z.rotation,z.health])});}
+      return;
+    }
+    if(state.phase==='gameover')return;
     if(state.phase==='intermission'){if(now>=state.nextRoundAt)nextRound(now);}
     if(state.pending>0&&zombies.size<14&&now>=spawnAt){spawn(now);spawnAt=now+450;}
     for(const zombie of zombies.values()){
