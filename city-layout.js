@@ -99,7 +99,11 @@
     barrier(side*20.55,202,15.45,.12);barrier(side*21.55,246,14.45,.12);
     barrier(side*7,258.5,.1,12.5);
   }
-  barrier(0,271,7,.12);
+  barrier(-4.5,271,2.5,.12);barrier(4.5,271,2.5,.12);
+  // Open central gate and shallow gangway lead to the marina's low boarding deck.
+  for(let i=0;i<8;i++)coast.surfaces.push({x:0,z:271.5+i,hx:2,hz:.5,y:1.4-(i+1)*.13,kind:'dock',ground:true});
+  coast.surfaces.push({x:0,z:280,hx:10,hz:1.5,y:.36,kind:'dock',ground:true});
+  coast.marinaBays=[{id:'marina-jetski',kind:'jetski',x:-5,z:284,rotation:0},{id:'marina-boat',kind:'boat',x:5,z:285,rotation:0}];
   // Collide with visible supports, not huge invisible boxes enclosing whole rides.
   for(const side of [-1,1])for(const depth of [-3,3])for(let i=0;i<12;i++){
     const t=(i+.5)/12;coast.obstacles.push({x:-18+side*9*(1-t),z:223+depth*(1-t*.5),hx:.62,hz:.31,minY:1.4+i/12*18.8,maxY:1.4+(i+1)/12*18.8,kind:'wheel-support'});

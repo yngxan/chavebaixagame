@@ -65,7 +65,7 @@
     for(let i=0;i<3;i++){const delta=b[i]-a[i];if(Math.abs(delta)<1e-9){if(a[i]<lo[i]||a[i]>hi[i])return null;continue;}const t1=(lo[i]-a[i])/delta,t2=(hi[i]-a[i])/delta;enter=Math.max(enter,Math.min(t1,t2));exit=Math.min(exit,Math.max(t1,t2));if(enter>exit)return null;}
     return enter<=1&&exit>=0?Math.max(0,enter):null;
   }
-  function shotBlock(from,to,vehicles=[]){let nearest=null;const obstacles=[...combatObstacles,...vehicles.map(v=>({x:v.x,z:v.z,rot:v.rotation,hx:v.kind==='car'?.86:.2,hz:v.kind==='car'?1.7:.55,minY:v.y+.35,maxY:v.y+(v.kind==='car'?1.65:.95)}))];for(const obstacle of obstacles){const t=boxHit(from,to,obstacle);if(t!==null&&(nearest===null||t<nearest))nearest=t;}return nearest;}
+  function shotBlock(from,to,vehicles=[]){let nearest=null;const obstacles=[...combatObstacles,...vehicles.map(v=>({x:v.x,z:v.z,rot:v.rotation,hx:v.kind==='boat'?1.4:v.kind==='jetski'?.45:v.kind==='car'?.86:.2,hz:v.kind==='boat'?3.25:v.kind==='jetski'?1.25:v.kind==='car'?1.7:.55,minY:v.y+(isWatercraft(v)?-.1:.35),maxY:v.y+(v.kind==='car'?1.65:v.kind==='boat'?1.4:.95)}))];for(const obstacle of obstacles){const t=boxHit(from,to,obstacle);if(t!==null&&(nearest===null||t<nearest))nearest=t;}return nearest;}
   function crossesSolid(from,to){if(to.y<-.3)return false;for(const obstacle of combatObstacles){if(to.y>=obstacle.maxY-.12||from.y>=obstacle.maxY-.12)continue;const t=boxHit({...from,y:from.y+.75},{...to,y:to.y+.75},obstacle,.18);if(t!==null&&t>.01&&t<.99)return true;}return false;}
   function clearAt(x, z, radius, obstacles = drivingObstacles,probeHeight=null) {
     const bounds=city.bounds;
@@ -89,8 +89,15 @@
   }
   function initialVehicles() {
     return [{id:'plaza-car',kind:'car',x:-14.5,y:-.05,z:5,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:250,wrecked:false,wheelieAngle:0},
-      {id:'plaza-moto',kind:'moto',x:-13.5,y:-.05,z:8.8,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:100,wrecked:false,wheelieAngle:0},...city.garageBays.map(b=>garageVehicle(b))];
+      {id:'plaza-moto',kind:'moto',x:-13.5,y:-.05,z:8.8,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:100,wrecked:false,wheelieAngle:0},...city.garageBays.map(b=>garageVehicle(b)),...city.coast.marinaBays.map(b=>marinaVehicle(b))];
   }
+  const isWatercraft=vehicle=>vehicle.kind==='jetski'||vehicle.kind==='boat';
+  const passengerCapacity=vehicle=>vehicle.kind==='boat'?9:1;
+  function marinaVehicle(bay,id=bay.id){return{id,kind:bay.kind,x:bay.x,y:city.coast.waterY,z:bay.z,rotation:bay.rotation,speed:0,steering:0,driverId:null,passengerIds:[],health:bay.kind==='boat'?250:100,wrecked:false,wheelieAngle:0,marinaBay:bay.id};}
+  function replenishMarina(records,now){const added=[];for(const bay of city.coast.marinaBays){const stock=[...records.values()].find(v=>v.marinaBay===bay.id);if(stock&&!stock.wrecked&&Math.hypot(stock.x-bay.x,stock.z-bay.z)<7)continue;if(stock)stock.marinaBay=null;
+    if(records.size>=48||[...records.values()].some(v=>Math.hypot(v.x-bay.x,v.z-bay.z)<(v.kind==='boat'?6:3)))continue;
+    const next=marinaVehicle(bay,bay.id+'-'+now+'-'+records.size);records.set(next.id,next);added.push(next);
+  }return added;}
   function garageVehicle(bay,id=bay.id){return{id,kind:bay.kind,x:bay.x,y:groundHeight(bay.x,bay.z),z:bay.z,rotation:bay.rotation,speed:0,steering:0,driverId:null,passengerIds:[],health:bay.kind==='car'?250:100,wrecked:false,wheelieAngle:0,garageBay:bay.id};}
   function replenishGarage(records,now){
     const added=[];for(const bay of city.garageBays){const stock=[...records.values()].find(v=>v.garageBay===bay.id);
@@ -105,7 +112,7 @@
   function expireUnoccupiedVehicles(records,now,timeout=180000){
     const expired=[];
     for(const [id,vehicle] of records){
-      if(vehicle.garageBay||vehicle.hijacking)continue;
+      if(vehicle.garageBay||vehicle.marinaBay||vehicle.hijacking)continue;
       const occupied=Boolean(vehicle.driverId||vehicle.passengerIds?.some(Boolean));
       if(occupied){delete vehicle.unoccupiedSince;continue;}
       if(!Number.isFinite(vehicle.unoccupiedSince)){vehicle.unoccupiedSince=now;continue;}
@@ -115,6 +122,7 @@
     return expired;
   }
   function vehicleClearAt(vehicle,x,z,rotation=vehicle.rotation,obstacles=drivingObstacles){
+    if(isWatercraft(vehicle))return watercraftClearAt(vehicle,x,z,rotation,obstacles);
     const moto=vehicle.kind==='moto',radius=moto?.29:.78;
     if(moto)return !motoContact(vehicle,x,z,rotation,obstacles);
     return [-1,0,1].every(side=>clearAt(x+Math.sin(rotation)*side*(moto?.76:1.18),z+Math.cos(rotation)*side*(moto?.76:1.18),radius,obstacles,vehicle.airborne?vehicle.y:null));
@@ -139,11 +147,13 @@
     return null;
   }
   function vehicleInteraction(vehicle,position) {
+    if(isWatercraft(vehicle)){const seat=vehicle.driverId?'passenger':'driver';return{seat,action:'enter',blocked:Boolean(vehicle.wrecked||vehicle.hijacking||seat==='passenger'&&(vehicle.passengerIds||[]).length>=passengerCapacity(vehicle))};}
     const dx=position.x-vehicle.x,dz=position.z-vehicle.z,c=Math.cos(vehicle.rotation),s=Math.sin(vehicle.rotation);
     const seat=vehicle.kind==='car'?(dx*c-dz*s>=0?'driver':'passenger'):(dx*s+dz*c>=-.34?'driver':'passenger');
     return {seat,action:seat==='driver'&&vehicle.driverId?'steal':'enter',blocked:Boolean(vehicle.wrecked||vehicle.hijacking||(seat==='passenger'&&(vehicle.passengerIds||[]).length>=1))};
   }
   function advanceVehicle(vehicle, input, dt, obstacles = drivingObstacles) {
+    if(isWatercraft(vehicle))return advanceWatercraft(vehicle,input,dt,obstacles);
     vehicle.collision=null;
     dt=clamp(dt,0,.05);const moto=vehicle.kind==='moto',throttle=clamp(Number(input.throttle)||0,-1,1),steer=clamp(Number(input.steer)||0,-1,1);
     vehicle.rampCooldown=Math.max(0,(Number(vehicle.rampCooldown)||0)-dt);
@@ -232,14 +242,21 @@
     return {x:frame.x+offset.x*c+z*s,y:frame.y+offset.y*Math.cos(angle)+offset.z*Math.sin(angle),z:frame.z-offset.x*s+z*c,rotation:vehicle.rotation,pitch:frame.pitch,scale};
   }
   function driverPose(vehicle) {
+    if(isWatercraft(vehicle))return seatPose(vehicle,{x:vehicle.kind==='boat'?.55:0,y:vehicle.kind==='boat'?-.12:-.30,z:vehicle.kind==='boat'?.9:-.1},vehicle.kind==='boat'?.72:.85);
     const offset=vehicle.kind==='car'?.32:0,scale=vehicle.kind==='car'?.62:.85;
     return seatPose(vehicle,{x:offset,y:vehicle.kind==='car'?-.015:.02,z:0},scale);
   }
   function passengerPose(vehicle,seat=0) {
+    if(isWatercraft(vehicle)){const offset=vehicle.kind==='jetski'?{x:0,y:-.30,z:-.75}:{x:seat===0?-.55:(seat%2?-.90:.90),y:-.12,z:seat===0?.9:-.45-Math.floor((seat-1)/2)*.58};return{...seatPose(vehicle,offset,vehicle.kind==='boat'?.72:.85),seat};}
     const offset=vehicle.kind==='car'?{x:-.48,z:-.08}:{x:0,z:-.67};
     return {...seatPose(vehicle,{...offset,y:vehicle.kind==='car'?-.015:.02},vehicle.kind==='car'?.62:.85),seat};
   }
   function exitPosition(vehicle) {
+    if(isWatercraft(vehicle)){
+      const reach=vehicle.kind==='boat'?4.2:2.2;
+      for(let i=0;i<16;i++){const angle=i*Math.PI/8,x=vehicle.x+Math.sin(angle)*reach,z=vehicle.z+Math.cos(angle)*reach,floor=groundHeight(x,z);if(floor!==null&&floor<=1.4&&clearAt(x,z,.34))return{x,y:floor,z};}
+      for(let i=0;i<16;i++){const angle=i*Math.PI/8,x=vehicle.x+Math.sin(angle)*reach,z=vehicle.z+Math.cos(angle)*reach;if(watercraftPointClear(x,z,.34,drivingObstacles))return{x,y:waterHeight(x,z,Date.now())-1.27,z};}return null;
+    }
     const radius=vehicle.kind==='car'?1.05:.46;
     for (const [side,forward] of [[1,0],[-1,0],[0,-1],[0,1]]) {
       const distance=radius+1.05,x=vehicle.x+Math.cos(vehicle.rotation)*side*distance+Math.sin(vehicle.rotation)*forward*distance,z=vehicle.z-Math.sin(vehicle.rotation)*side*distance+Math.cos(vehicle.rotation)*forward*distance;
@@ -247,7 +264,23 @@
     }
     return null;
   }
-  function vehicleObstacles(vehicle,records){return [...drivingObstacles,...[...records].filter(other=>other.id!==vehicle.id).map(other=>({x:other.x,z:other.z,r:other.kind==='car'?1.05:.46,minY:other.y,maxY:other.y+(other.kind==='car'?1.7:1.1),vehicleId:other.id}))];}
+  function vehicleObstacles(vehicle,records){return [...drivingObstacles,...[...records].filter(other=>other.id!==vehicle.id).map(other=>({x:other.x,z:other.z,hx:other.kind==='boat'?1.5:other.kind==='car'?.9:other.kind==='jetski'?.5:.35,hz:other.kind==='boat'?3.25:other.kind==='car'?1.75:1.15,rot:other.rotation,minY:other.y,maxY:other.y+(other.kind==='car'?1.7:1.1),vehicleId:other.id}))];}
+  function watercraftPointClear(x,z,radius,obstacles){const b=city.bounds;if(x<b.minX+radius||x>b.maxX-radius||z<b.minZ+radius||z>b.maxZ-radius)return false;
+    // Hull probes never cross the shore or pass underneath any visible pier/deck.
+    if([[0,0],[radius,0],[-radius,0],[0,radius],[0,-radius]].some(([dx,dz])=>groundHeight(x+dx,z+dz)!==null))return false;
+    for(const o of obstacles){const c=Math.cos(o.rot||0),s=Math.sin(o.rot||0),dx=x-o.x,dz=z-o.z,lx=dx*c-dz*s,lz=dx*s+dz*c,hit=o.r!==undefined?Math.hypot(dx,dz)<o.r+radius:Math.hypot(Math.max(0,Math.abs(lx)-o.hx),Math.max(0,Math.abs(lz)-o.hz))<radius;if(hit)return false;}return true;
+  }
+  function watercraftClearAt(vehicle,x,z,rotation,obstacles){const boat=vehicle.kind==='boat',r=boat?.73:.42,length=boat?2.5:.8,width=boat?.75:0;
+    for(const side of [-1,0,1])for(const forward of [-1,0,1]){const px=x+Math.cos(rotation)*side*width+Math.sin(rotation)*forward*length,pz=z-Math.sin(rotation)*side*width+Math.cos(rotation)*forward*length;if(!watercraftPointClear(px,pz,r,obstacles))return false;}return true;
+  }
+  function advanceWatercraft(vehicle,input,dt,obstacles){dt=clamp(dt,0,.05);vehicle.collision=null;vehicle.airborne=false;vehicle.submerged=false;vehicle.wheelieAngle=0;vehicle.drifting=false;
+    const jet=vehicle.kind==='jetski',throttle=clamp(Number(input.throttle)||0,-1,1),steer=clamp(Number(input.steer)||0,-1,1);vehicle.speed=Number(vehicle.speed)||0;
+    vehicle.speed*=Math.exp(-(input.brake?4.5:throttle?.35:1.1)*dt);vehicle.speed=clamp(vehicle.speed+(input.brake?0:throttle*(jet?10:6)*dt),-4,jet?29:20);
+    if(Math.abs(vehicle.speed)<.035)vehicle.speed=0;vehicle.steering=(vehicle.steering||0)+(steer-(vehicle.steering||0))*(1-Math.exp(-7*dt));
+    const previous=vehicle.rotation,rate=clamp(-vehicle.steering*vehicle.speed/(jet?13:22),jet?-1.65:-.85,jet?1.65:.85),rotation=Math.atan2(Math.sin(previous+rate*dt),Math.cos(previous+rate*dt)),dx=Math.sin(previous+rate*dt*.5)*vehicle.speed*dt,dz=Math.cos(previous+rate*dt*.5)*vehicle.speed*dt,steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/.10));
+    for(let i=0;i<steps;i++){const x=vehicle.x+dx/steps,z=vehicle.z+dz/steps,r=previous+rate*dt*(i+1)/steps;if(!watercraftClearAt(vehicle,x,z,r,obstacles)){const obstacle=obstacles.find(o=>!watercraftClearAt(vehicle,x,z,r,[o]));vehicle.collision={speed:Math.abs(vehicle.speed),vehicleId:obstacle?.vehicleId||null};vehicle.speed=0;vehicle.rotation=previous;break;}vehicle.x=x;vehicle.z=z;vehicle.rotation=r;}
+    vehicle.rotation=Math.atan2(Math.sin(vehicle.rotation),Math.cos(vehicle.rotation));vehicle.y=waterHeight(vehicle.x,vehicle.z,Number.isFinite(input.serverTime)?input.serverTime:Date.now());return vehicle;
+  }
   function hijackPose(vehicle,role,now){
     const action=vehicle.hijacking;if(!action)return null;
     const progress=clamp((now-action.startedAt)/HIJACK_MS,0,1),smooth=t=>{t=clamp(t,0,1);return t*t*(3-2*t);},seat=driverPose(vehicle),outside=action.outside;
@@ -263,5 +296,5 @@
     const face=Math.atan2(seat.x-approach.x,seat.z-approach.z),turn=Math.atan2(Math.sin(vehicle.rotation-face),Math.cos(vehicle.rotation-face));
     return {...position,rotation:face+turn*enter,scale:1+(seat.scale-1)*enter,progress,pull:smooth((progress-.32)/.38),enter};
   }
-  globalThis.LowkeyWorld={MAP_HALF_SIZE,city,SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,waterHeight,waterAt,isSwimming,advanceSwimmer,keepCameraAboveGround,constrainCamera,shotBlock,crossesSolid,initialVehicles,garageVehicle,replenishGarage,expireUnoccupiedVehicles,vehicleClearAt,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose};
+  globalThis.LowkeyWorld={MAP_HALF_SIZE,city,SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,waterHeight,waterAt,isSwimming,advanceSwimmer,keepCameraAboveGround,constrainCamera,shotBlock,crossesSolid,initialVehicles,garageVehicle,replenishGarage,expireUnoccupiedVehicles,vehicleClearAt,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose,isWatercraft,passengerCapacity,marinaVehicle,replenishMarina};
 })();

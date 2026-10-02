@@ -797,8 +797,8 @@ const server = createServer(async (request, response) => {
       let action=data.action,boarding=null;
       if(action==='paint'){
         const vehicle=vehicles.get(String(data.vehicleId||''));
-        if(!vehicle||!vehicle.garageBay||vehicle.wrecked||vehicle.hijacking||vehicle.driverId&&vehicle.driverId!==player.id)return json(response,409,{error:'Escolha um veículo disponível na garagem.'});
-        const bay=LowkeyWorld.city.garageBays.find(b=>b.id===vehicle.garageBay);
+        if(!vehicle||!(vehicle.garageBay||vehicle.marinaBay)||vehicle.wrecked||vehicle.hijacking||vehicle.driverId&&vehicle.driverId!==player.id)return json(response,409,{error:'Escolha um veículo disponível na garagem ou marina.'});
+        const bay=[...LowkeyWorld.city.garageBays,...LowkeyWorld.city.coast.marinaBays].find(b=>b.id===(vehicle.garageBay||vehicle.marinaBay));
         if(!bay||Math.hypot(vehicle.x-bay.x,vehicle.z-bay.z)>4||Math.hypot(player.position.x-vehicle.x,player.position.z-vehicle.z)>3.55)return json(response,403,{error:'Escolha a cor antes de sair da garagem.'});
         if(typeof data.color!=='string'||!/^#[0-9a-f]{6}$/i.test(data.color))return json(response,400,{error:'Cor inválida.'});
         vehicle.color=data.color.toLowerCase();broadcast({type:'world-state',...worldSnapshot()});response.writeHead(204);return response.end();
@@ -818,10 +818,10 @@ const server = createServer(async (request, response) => {
         if(vehicle.wrecked||vehicle.hijacking)return json(response,409,{error:'Esse veículo não pode ser ocupado agora.'});
         if(Math.hypot(player.position.x-vehicle.x,player.position.z-vehicle.z)>3.55||Math.abs(player.position.y-vehicle.y)>1.5)return json(response,403,{error:'Chegue mais perto para entrar.'});
         if(boarding.seat==='driver'&&!vehicle.driverId){vehicle.driverId=player.id;player.vehicleSeat='driver';vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:-1});}
-        else if(boarding.seat==='passenger'&&(vehicle.passengerIds||[]).length<1){vehicle.passengerIds||=[];vehicle.passengerIds.push(player.id);player.vehicleSeat='passenger';}
+        else if(boarding.seat==='passenger'&&(vehicle.passengerIds||[]).length<LowkeyWorld.passengerCapacity(vehicle)){vehicle.passengerIds||=[];vehicle.passengerIds.push(player.id);player.vehicleSeat='passenger';}
         else return json(response,409,{error:'O veículo está cheio. Tente puxar o motorista para fora.'});
         if(player.vehicleSeat==='driver')vehicle.speed=0;player.vehicleId=vehicle.id;player.weaponId='punch';player.glockEquipped=false;player.glockAiming=false;
-        const pose=player.vehicleSeat==='driver'?LowkeyWorld.driverPose(vehicle):LowkeyWorld.passengerPose(vehicle,0);player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.walking=false;player.jumping=false;player.speed=Math.abs(vehicle.speed);player.motionTime=now;player.motionReset=(player.motionReset||0)+1;
+        const pose=player.vehicleSeat==='driver'?LowkeyWorld.driverPose(vehicle):LowkeyWorld.passengerPose(vehicle,vehicle.passengerIds.indexOf(player.id));player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.walking=false;player.jumping=false;player.speed=Math.abs(vehicle.speed);player.motionTime=now;player.motionReset=(player.motionReset||0)+1;
       } else if(data.action==='exit') {
         const vehicle=vehicles.get(player.vehicleId);if(!vehicle||vehicle.driverId!==player.id&&!(vehicle.passengerIds||[]).includes(player.id))return json(response,409,{error:'Você não está em um veículo.'});
         if(vehicle.hijacking)return json(response,409,{error:'Aguarde a ação terminar.'});
@@ -1346,7 +1346,7 @@ setInterval(()=>{
   const now=Date.now(),dt=Math.min(.1,(now-lastVehicleTick)/1000);lastVehicleTick=now;let occupied=false,changed=false;
   for(const [id,player] of players){const client=clients.get(id);if(client?.deadUntil&&now>=client.deadUntil)respawnPlayer(player,client,now);}
   for(const vehicle of vehicles.values()) {
-    if(!vehicle.driverId){if(vehicle.airborne){const steps=Math.max(1,Math.ceil(dt/.025));for(let i=0;i<steps;i++)LowkeyWorld.advanceVehicle(vehicle,{throttle:0,steer:0,brake:true},dt/steps,LowkeyWorld.vehicleObstacles(vehicle,vehicles.values()));changed=true;}continue;}
+    if(!vehicle.driverId){if(LowkeyWorld.isWatercraft(vehicle)){vehicle.y=LowkeyWorld.waterHeight(vehicle.x,vehicle.z,now);vehicle.speed=0;for(const [seat,id] of (vehicle.passengerIds||[]).entries()){const passenger=players.get(id);if(!passenger)continue;occupied=true;const pose=LowkeyWorld.passengerPose(vehicle,seat);passenger.position={x:pose.x,y:pose.y,z:pose.z};passenger.motionTime=now;lastKnownPositions.set(passenger.accountId,passenger.position);}}if(vehicle.airborne){const steps=Math.max(1,Math.ceil(dt/.025));for(let i=0;i<steps;i++)LowkeyWorld.advanceVehicle(vehicle,{throttle:0,steer:0,brake:true},dt/steps,LowkeyWorld.vehicleObstacles(vehicle,vehicles.values()));changed=true;}continue;}
     const player=players.get(vehicle.driverId),client=clients.get(vehicle.driverId);
     if(!player||!client){vehicle.driverId=null;vehicle.speed=0;vehicle.wheelieAngle=0;vehicleInputs.delete(vehicle.id);changed=true;continue;}
     if(client.deadUntil){releaseVehicle(player);send(client.response,{type:'vehicle-exit',position:player.position});changed=true;continue;}
@@ -1354,7 +1354,7 @@ setInterval(()=>{
     if(vehicle.hijacking){const pending=pendingHijacks.get(vehicle.id);if(!pending||!players.has(pending.thiefId)){cancelVehicleHijack(vehicle);changed=true;}}
     const input=vehicleInputs.get(vehicle.id),controls=vehicle.wrecked||vehicle.hijacking?{throttle:0,steer:0,brake:true}:input&&now-input.at<800?input:{throttle:0,steer:0,brake:true};
     const obstacles=LowkeyWorld.vehicleObstacles(vehicle,vehicles.values());
-    const steps=Math.max(1,Math.ceil(dt/.025));let impact=null;for(let i=0;i<steps;i++){LowkeyWorld.advanceVehicle(vehicle,controls,dt/steps,obstacles);if(vehicle.collision){impact=vehicle.collision;break;}}
+    const steps=Math.max(1,Math.ceil(dt/.025));let impact=null;for(let i=0;i<steps;i++){LowkeyWorld.advanceVehicle(vehicle,{...controls,serverTime:now},dt/steps,obstacles);if(vehicle.collision){impact=vehicle.collision;break;}}
     if(vehicle.submerged){ejectVehicleOccupants(vehicle,now,1);changed=true;continue;}
     const previousSpeed=impact?.speed||0;
     if(impact&&previousSpeed>8){
@@ -1389,10 +1389,11 @@ setInterval(()=>{
       broadcast({type:'vehicle-impact',vehicleId:vehicle.id,kind:vehicle.kind,targetId:target.id,damage,impulse,time:now});if(deadUntil)broadcast({type:'glock-elimination',shooterId:player.id,targetId:target.id,headshot:false,time:now});changed=true;
     }
     const driverPose=LowkeyWorld.driverPose(vehicle);player.position={x:driverPose.x,y:driverPose.y,z:driverPose.z};player.rotation=driverPose.rotation;player.speed=Math.abs(vehicle.speed);player.walking=false;player.jumping=false;player.motionTime=now;player.vehicleSeat='driver';lastKnownPositions.set(player.accountId,player.position);
-    for(const passengerId of vehicle.passengerIds||[]){const passenger=players.get(passengerId);if(!passenger)continue;const pose=LowkeyWorld.passengerPose(vehicle);passenger.position={x:pose.x,y:pose.y,z:pose.z};passenger.rotation=pose.rotation;passenger.speed=Math.abs(vehicle.speed);passenger.walking=false;passenger.jumping=false;passenger.motionTime=now;passenger.vehicleSeat='passenger';lastKnownPositions.set(passenger.accountId,passenger.position);}
+    for(const [seat,passengerId] of (vehicle.passengerIds||[]).entries()){const passenger=players.get(passengerId);if(!passenger)continue;const pose=LowkeyWorld.passengerPose(vehicle,seat);passenger.position={x:pose.x,y:pose.y,z:pose.z};passenger.rotation=pose.rotation;passenger.speed=Math.abs(vehicle.speed);passenger.walking=false;passenger.jumping=false;passenger.motionTime=now;passenger.vehicleSeat='passenger';lastKnownPositions.set(passenger.accountId,passenger.position);}
     if(vehicle.hijacking)for(const [role,id] of [['thief',vehicle.hijacking.thiefId],['victim',vehicle.hijacking.victimId]]){const occupant=players.get(id),pose=LowkeyWorld.hijackPose(vehicle,role,now);if(occupant&&pose){occupant.position={x:pose.x,y:pose.y,z:pose.z};occupant.rotation=pose.rotation;occupant.walking=false;occupant.motionTime=now;}}
   }
   if(LowkeyWorld.replenishGarage(vehicles,now).length)changed=true;
+  if(LowkeyWorld.replenishMarina(vehicles,now).length)changed=true;
   const expiredVehicles=LowkeyWorld.expireUnoccupiedVehicles(vehicles,now);
   if(expiredVehicles.length){for(const id of expiredVehicles)vehicleInputs.delete(id);changed=true;}
   if(changed||(occupied&&now-lastVehicleBroadcast>=100)){lastVehicleBroadcast=now;broadcast({type:'world-state',...worldSnapshot()});}

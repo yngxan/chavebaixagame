@@ -9,7 +9,7 @@ const city=LowkeyCityLayout,world=LowkeyWorld,motion=LowkeyMotion;
 
 test('island coast has shared support heights and no invisible ocean floor',()=>{
   assert.equal(city.bounds.minZ,-210);assert.equal(city.bounds.maxZ,340);
-  for(const [x,z,y] of [[0,120,.12],[40,125,.12],[40,160,-.05],[0,156,.12],[0,172,1.4],[0,200,1.4],[30,225,1.4],[0,265,1.4],[90,225,null],[0,275,null]]){
+  for(const [x,z,y] of [[0,120,.12],[40,125,.12],[40,160,-.05],[0,156,.12],[0,172,1.4],[0,200,1.4],[30,225,1.4],[0,265,1.4],[90,225,null],[30,275,null]]){
     assert.equal(world.groundHeight(x,z),y,`server floor ${x},${z}`);assert.equal(motion.supportHeight(motion.plazaSurfaces,x,z),y,`client floor ${x},${z}`);
   }
   for(let x=-119.5;x<120;x+=4.4)for(let z=120;z<280;z+=2.3)assert.equal(world.groundHeight(x,z),motion.supportHeight(motion.plazaSurfaces,x,z));
@@ -50,7 +50,8 @@ test('actual movement and landing code walks from the city up the ramp and acros
 });
 
 test('rides, kiosks and guardrails block entry while the park path stays open',()=>{
-  for(const [x,z] of [[-23,240],[36,224],[0,271]])assert.equal(world.clearAt(x,z,.32),false);
+  for(const [x,z] of [[-23,240],[36,224],[4.5,271]])assert.equal(world.clearAt(x,z,.32),false);
+  assert.equal(world.clearAt(0,271,.32),true,'marina gate is open');
   for(const [x,z] of [[-18,223],[16,220]])assert.equal(world.clearAt(x,z,.32),true,'empty space below a ride is walkable');
   for(const [x,y,z] of city.coast.trackSupports)assert.equal(world.clearAt(x,z,.32),false,'visible track column blocks movement');
   for(const z of [125,156,171,180,201,214,224,240,260])assert.equal(world.clearAt(0,z,.32),true,`open center route at ${z}`);

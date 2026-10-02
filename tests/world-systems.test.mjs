@@ -59,7 +59,7 @@ test('day/night alternates every fifteen minutes, stays synchronized after resta
 });
 
 test('both vehicles accelerate, steer, brake, reverse and obey boundaries without tunneling',()=>{
-  for(const vehicle of world.initialVehicles()) {
+  for(const vehicle of world.initialVehicles().filter(v=>!world.isWatercraft(v))) {
     vehicle.x=0;vehicle.z=20;vehicle.rotation=0;
     for(let i=0;i<30;i++)world.advanceVehicle(vehicle,{throttle:1,steer:0},1/60,[]);
     assert.ok(vehicle.speed>4);assert.ok(vehicle.z>21);
@@ -80,7 +80,7 @@ test('both vehicles accelerate, steer, brake, reverse and obey boundaries withou
 });
 
 test('A and D turn left and right from every heading, with natural reverse steering',()=>{
-  for(const base of world.initialVehicles())for(const heading of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const steer of [-1,1])for(const speed of [8,-4]){
+  for(const base of world.initialVehicles().filter(v=>!world.isWatercraft(v)))for(const heading of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const steer of [-1,1])for(const speed of [8,-4]){
     const vehicle={...base,x:0,z:20,rotation:heading,speed};
     world.advanceVehicle(vehicle,{steer},1/60,[]);
     const turn=Math.atan2(Math.sin(vehicle.rotation-heading),Math.cos(vehicle.rotation-heading));
@@ -89,7 +89,7 @@ test('A and D turn left and right from every heading, with natural reverse steer
 });
 
 test('steering eases in, recenters and stays controllable at top speed',()=>{
-  for(const base of world.initialVehicles()){
+  for(const base of world.initialVehicles().filter(v=>!world.isWatercraft(v))){
     const vehicle={...base,x:0,z:20,rotation:0,speed:base.kind==='car'?22:27};
     world.advanceVehicle(vehicle,{throttle:1,steer:1},1/60,[]);
     assert.ok(vehicle.steering>0&&vehicle.steering<.2,'no instant full steering lock');

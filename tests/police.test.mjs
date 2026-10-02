@@ -27,10 +27,10 @@ test('police approach, arrest for 20 seconds, retain detention on reconnect, and
   f.game.connect({...p,id:'reconnected'});assert.equal(f.arrests.length,2);assert.equal(f.arrests[0][1],f.arrests[1][1],'reconnect cannot shorten detention');
   f.step(401);assert.equal(f.game.isJailed(p),false);assert.equal(f.releases.length,1);
 });
-test('NPC damage is server-owned, escalates crimes, respawns officers, and does not grow NPC counts',()=>{
+test('NPC damage is server-owned, escalates crimes, respawns officers, and keeps reinforcements bounded',()=>{
   const f=fixture(),p={id:'p',accountId:'a',position:{x:100,y:0,z:156},health:100};f.players.set(p.id,p);
   assert.equal(f.game.hurt('unknown',100,p),false);assert.ok(f.game.hurt('police-5',100,p));assert.equal(f.game.officers.get('police-5').health,0);assert.equal(f.game.snapshot().wanted[0].stars,2);
-  f.step(601);assert.equal(f.game.officers.get('police-5').health,100);assert.equal(f.game.officers.size,6);f.pause(true);assert.equal(f.game.hurt('police-5',100,p),false);
+  f.step(601);assert.equal(f.game.officers.get('police-5').health,100);assert.ok(f.game.officers.size<=f.game.MAX_OFFICERS);f.pause(true);assert.equal(f.game.hurt('police-5',100,p),false);
 });
 test('station officers find the doorway and walk around walls rather than through the building',()=>{
   const f=fixture(),p={id:'p',accountId:'a',position:{x:-55,y:0,z:-4},health:100};f.players.set(p.id,p);f.game.crime(p);
@@ -39,4 +39,33 @@ test('station officers find the doorway and walk around walls rather than throug
 });
 test('frequent motion snapshots are compact and do not resend avatar appearances',()=>{
   const f=fixture();f.step();const motion=f.events.find(e=>e.type==='police-motion');assert.equal(motion.officers.length,6);assert.equal(motion.cars.length,2);assert.equal(JSON.stringify(motion).includes('appearance'),false);assert.ok(JSON.stringify(motion).length<JSON.stringify(f.game.snapshot()).length/2);
+});
+test('a defeated patrol car stays abandoned then disappears; its officers respawn inside the station and patrol again',()=>{
+  const f=fixture(),car=f.game.cars[0],ids=[...car.officerIds],before={x:car.x,z:car.z};for(const id of ids)assert.ok(f.game.hurt(id,100,null));
+  f.step(200);assert.ok(f.game.cars.includes(car));assert.deepEqual({x:car.x,z:car.z},before);assert.equal(car.speed,0);assert.equal(car.lights,false);
+  f.step(400);assert.equal(f.game.cars.some(c=>c.id===car.id),false);for(const id of ids){const o=f.game.officers.get(id);assert.equal(o.health,100);assert.equal(o.carId,null);assert.equal(o.seated,false);assert.ok(Math.hypot(o.position.x-o.home.x,o.position.z-o.home.z)<.01);}
+  const positions=ids.map(id=>({...f.game.officers.get(id).position}));f.step(100);assert.ok(ids.some((id,i)=>Math.hypot(f.game.officers.get(id).position.x-positions[i].x,f.game.officers.get(id).position.z-positions[i].z)>1));
+  f.step(400);assert.ok(f.game.cars.filter(c=>!c.abandonedUntil).length>=2,'replacement patrol is dispatched');assert.ok(f.events.some(e=>e.type==='police-state'&&!e.cars.some(c=>c.id===car.id)));
+});
+test('reinforcements spawn in the station during pursuit, remain bounded, and stop spawning in Zombies',()=>{
+  const f=fixture(),p={id:'wanted',accountId:'wanted',position:{x:160,y:3.2,z:310},health:100};f.players.set(p.id,p);f.game.crime(p,10,{gunfire:true});f.game.hurt('police-5',100,null);f.game.hurt('police-6',100,null);f.step(241);
+  const reinforcements=[...f.game.officers.values()].filter(o=>o.reinforcement);assert.ok(reinforcements.length>0);assert.ok(reinforcements.every(o=>Math.hypot(o.position.x-LowkeyCityLayout.policeStation.x,o.position.z-LowkeyCityLayout.policeStation.z)<8));
+  for(let cycle=0;cycle<4;cycle++){for(const o of f.game.officers.values())if(o.health>0&&o.carId)f.game.hurt(o.id,100,p);f.game.crime(p,10);f.step(650);assert.ok(f.game.officers.size<=f.game.MAX_OFFICERS);assert.ok(f.game.cars.filter(c=>!c.abandonedUntil).length<=f.game.MAX_PATROL_CARS);}
+  f.pause(true);const count=f.game.officers.size;f.step(240);assert.ok(f.game.officers.size<=count,'no new officers are dispatched while Zombies is active');
+});
+test('wanted players can be followed and captured in the safe plaza, but innocent players cannot generate a crime there',()=>{
+  const f=fixture(),p={id:'wanted',accountId:'wanted',position:{x:-34,y:0,z:1},health:100};f.players.set(p.id,p);f.game.crime(p);p.position={x:-23,y:0,z:1};const o=f.game.officers.get('police-5');o.position={x:-31,y:0,z:1};f.step(180);assert.ok(f.arrests.length,'crossing the plaza boundary does not stop arrest');
+  const innocent={id:'innocent',accountId:'innocent',position:{x:0,y:0,z:0},health:100};f.players.set(innocent.id,innocent);assert.equal(f.game.crime(innocent,10,{gunfire:true}),false);f.step(60);assert.equal(f.game.isJailed(innocent),false);
+});
+test('head-on patrols give way and pass without teleporting or freezing on the same lane',()=>{
+  const f=fixture(),[a,b]=f.game.cars,north=f.game.roadNodes.findIndex(p=>p.x===-60&&p.z===-36),south=f.game.roadNodes.findIndex(p=>p.x===-60&&p.z===-64);
+  Object.assign(a,{x:-60,z:-55,rotation:0,node:south,path:[north],planAt:Infinity});Object.assign(b,{x:-60,z:-50,rotation:Math.PI,node:north,path:[south],planAt:Infinity});let passed=false,siding=false;
+  for(let i=0;i<240;i++){const before=[{x:a.x,z:a.z},{x:b.x,z:b.z}];f.step();siding||=Math.abs(b.x+60)>1;passed||=a.z>b.z+3;for(const [j,c] of [a,b].entries()){assert.ok(Math.hypot(c.x-before[j].x,c.z-before[j].z)<=.401,'no teleport');assert.equal(LowkeyWorld.vehicleClearAt(c,c.x,c.z),true,'stay on navigable geometry');}}
+  assert.ok(siding,'lower priority patrol opens a siding');assert.ok(passed,'both cars get past the head-on conflict');
+});
+test('multiple wanted players split patrol assignments; additional teams leave the station without exceeding limits',()=>{
+  const f=fixture(),a={id:'a',accountId:'aa',health:100,position:{x:-60,y:3.2,z:-52}},b={id:'b',accountId:'bb',health:100,position:{x:60,y:3.2,z:52}};f.players.set(a.id,a);f.players.set(b.id,b);f.game.crime(a);f.game.crime(b);f.step(20);
+  assert.equal(new Set(f.game.cars.filter(c=>!c.abandonedUntil).map(c=>c.targetId)).size,2,'both suspects receive a patrol');
+  f.step(500);assert.ok(f.game.cars.length>=4,'multiple suspects request extra cars');assert.ok(f.game.officers.size<=18);assert.ok(f.game.cars.filter(c=>!c.abandonedUntil).length<=6);
+  b.health=0;f.step(20);assert.ok(f.game.cars.filter(c=>!c.deploying&&!c.abandonedUntil).every(c=>c.targetId===a.id),'teams retarget surviving wanted players');
 });

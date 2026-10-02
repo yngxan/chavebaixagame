@@ -56,9 +56,17 @@ A delegacia fica a oeste da praça, em **x -46 / z -18**, substituindo o primeir
 - Disparos aceitos pelo servidor, agressões e ataques aos policiais aumentam a perseguição de uma a cinco estrelas. Requisições rejeitadas não geram crimes.
 - Viaturas perseguem pelas ruas; policiais descem e tentam capturar o suspeito. O nível diminui quando ele fica longe da polícia sem cometer novos crimes.
 - A captura exige proximidade por 1,2 segundo e suspeito a pé ou veículo quase parado. A prisão dura 20 segundos, com contador, movimento e armas bloqueados. Reconectar não elimina a prisão.
-- A praça continua segura. A polícia não captura jogadores nela, e perseguições são suspensas durante Zombies.
+- A praça continua sem armas e tiros. A polícia pode seguir e capturar quem já estiver procurado lá dentro; perseguições são suspensas durante Zombies.
 - Policiais revidam disparos validados, com tempo de reação, chance de errar e cadência limitada. Obstáculos e a praça bloqueiam os tiros; agressões sem arma continuam levando à captura. Viaturas de polícia ainda não podem ser dirigidas pelos jogadores.
 - A perseguição usa viaturas mais rápidas, policiais espaçados e a última posição vista. Após perder o suspeito, a primeira estrela diminui depois de 60 segundos sem novos crimes, e as seguintes a cada 20 segundos.
+- Equipes são distribuídas entre os procurados. Reforços saem pela delegacia, limitados a seis viaturas de patrulha e 18 policiais. Viaturas cuja equipe foi morta ficam paradas por 30 segundos e somem; policiais renascem na delegacia após 30 segundos e retomam a patrulha. Viaturas cedem passagem em conflitos frontais.
+
+## Marina (prévia local)
+
+- No fim do píer, a passagem central desce até o deck da marina. Jetski para duas pessoas e lancha para dez (motorista + nove passageiros).
+- Entre com E ou o botão de interação; WASD/analógico dirigem, espaço/botão de freio desaceleram. Freie antes de sair; fora do cais, sair coloca o jogador na água para nadar.
+- Ondas, limites do oceano e colisões são compartilhados entre servidor e cliente. As embarcações não atravessam a areia ou o píer. A marina repõe o estoque depois que a embarcação se afasta, sem sobrepor outra embarcação.
+- Cores selecionáveis no cais; embarcações sem ninguém por três minutos são removidas, exceto o estoque da marina.
 
 ## Controles
 

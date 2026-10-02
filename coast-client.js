@@ -53,7 +53,7 @@
     lampMat.emissive.set(0xffbf65);
     function part(mat,x,y,z,sx,sy,sz,geo=boxGeo,q=null,cast=true){const key=`${mat.uuid}:${geo.uuid}:${cast}`,batch=batches.get(key)||{mat,geo,cast,items:[]};batch.items.push({x,y,z,sx,sy,sz,q});batches.set(key,batch);}
     function beam(a,b,width,mat,depth=width){const start=new THREE.Vector3(...a),end=new THREE.Vector3(...b),delta=end.clone().sub(start),middle=start.clone().add(end).multiplyScalar(.5),q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),delta.clone().normalize());part(mat,middle.x,middle.y,middle.z,width,delta.length(),depth,boxGeo,q);}
-    for(const s of layout.surfaces){const board=s.kind==='pier'||s.kind==='ramp'||s.kind==='access';part(s.kind==='sand'?sand:s.kind==='promenade'?pavement:wood,s.x,s.y-(board?.17:.30),s.z,s.hx*2,board?.34:.60,s.hz*2,boxGeo,null,false);
+    for(const s of layout.surfaces){const board=s.kind==='pier'||s.kind==='ramp'||s.kind==='access'||s.kind==='dock';part(s.kind==='sand'?sand:s.kind==='promenade'?pavement:wood,s.x,s.y-(board?.17:.30),s.z,s.hx*2,board?.34:.60,s.hz*2,boxGeo,null,false);
       if(board)for(let z=s.z-s.hz+.3;z<s.z+s.hz;z+=.65)part(darkWood,s.x,s.y+.001,z,s.hx*2,.005,.035,boxGeo,null,false);
     }
     part(wetSand,0,-.052,180.8,240,.012,2.4,boxGeo,null,false);
@@ -65,6 +65,9 @@
     part(teal,0,5.1,161,12.3,.6,.45);sign('LOWKEY PIER',0,5.08,161.25,10,.8);
     sign('LOWKEY PIER',0,5.08,160.75,10,.8,Math.PI);
     sign('PRAIA →',9,2.3,128,4.5,1.4);part(dark,9,1.3,127.9,.14,2.6,.14);
+    sign('MARINA · JET & LANCHA',0,3.1,269.5,6,1.1,Math.PI);
+    for(const x of [-9,0,9]){part(darkWood,x,-.9,280,.35,2.6,.35,poleGeo);part(steel,x,.54,280,.18,.35,.18);}
+    for(const bay of layout.marinaBays)sign(bay.kind==='boat'?'LANCHA · 10 LUGARES':'JETSKI · 2 LUGARES',bay.x,1.4,280,3.7,.65,Math.PI);
     // Boardwalk support piles descend into the ocean rather than floating on it.
     for(const s of layout.surfaces.filter(s=>s.kind==='pier')){
       for(let x=s.x-s.hx+.65;x<s.x+s.hx;x+=8)for(let z=s.z-s.hz+.65;z<s.z+s.hz;z+=7){part(darkWood,x,-1.05,z,.42,4.6,.42,poleGeo);}

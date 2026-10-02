@@ -23,11 +23,12 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
     cars.push(car);
   }
   for(let i=0;i<2;i++){const home={...layout.policePoint(-4+i*3,3),y:.12};officers.set(`police-${5+i}`,{id:`police-${5+i}`,police:true,carId:null,home,position:{...home},rotation:layout.policeStation.rotation,walking:false,seated:false,health:100,appearance:{...appearance},respawnAt:0});}
-  let lastAt=clock(),lastBroadcast=-Infinity,nextVolleyAt=0;
+  const MAX_OFFICERS=18,MAX_PATROL_CARS=6,RESPAWN_MS=30000,ABANDONED_MS=30000;
+  let lastAt=clock(),lastBroadcast=-Infinity,nextVolleyAt=0,nextOfficer=7,nextCar=3,nextReinforcementAt=clock()+12000,structureChanged=false;
   const getRecord=p=>offenders.get(p.accountId);
   const walkPlans=new Map(),walkable=new Map();
   const cell=p=>({x:Math.round(p.x/1.5),z:Math.round(p.z/1.5)}),key=p=>`${p.x}:${p.z}`;
-  function cellClear(p){const k=key(p);if(!walkable.has(k)){if(walkable.size>16000)walkable.clear();walkable.set(k,world.clearAt(p.x*1.5,p.z*1.5,.36)&&!layout.inSafeZone({x:p.x*1.5,z:p.z*1.5}));}return walkable.get(k);}
+  function cellClear(p){const k=key(p);if(!walkable.has(k)){if(walkable.size>16000)walkable.clear();walkable.set(k,world.clearAt(p.x*1.5,p.z*1.5,.36));}return walkable.get(k);}
   function footPath(from,to){const start=cell(from),goal=cell(to);if(!cellClear(goal))return[];const open=[{...start,g:0,f:distance(start,goal)}],cost=new Map([[key(start),0]]),previous=new Map(),visited=new Set();
     // Bounded search is only used when a straight path is obstructed, not every frame.
     for(let attempts=0;open.length&&attempts<1500;attempts++){
@@ -42,9 +43,22 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
   }
   function isJailed(player){return Boolean(player&&getRecord(player)?.jailUntil>clock());}
   function connect(player){const record=getRecord(player);if(record?.jailUntil>clock())arrest(player,record.jailUntil,layout.jail);else if(record?.jailUntil){record.jailUntil=0;release(player,layout.jailExit);}}
-  function hurt(id,damage,attacker){const officer=officers.get(id);if(!officer||officer.health<=0||paused())return false;officer.health=Math.max(0,officer.health-Math.max(0,Math.min(100,damage)));crime(attacker,officer.health?3:8);if(!officer.health){officer.seated=false;officer.walking=false;officer.respawnAt=clock()+30000;}return true;}
+  function hurt(id,damage,attacker){const officer=officers.get(id);if(!officer||officer.health<=0||paused())return false;officer.health=Math.max(0,officer.health-Math.max(0,Math.min(100,damage)));crime(attacker,officer.health?3:8);if(!officer.health){officer.seated=false;officer.walking=false;officer.respawnAt=clock()+RESPAWN_MS;officer.armed=false;officer.aiming=false;
+    const car=cars.find(c=>c.id===officer.carId);officer.carId=null;officer.home={...layout.policePoint((Number(id.split('-').at(-1))%3-1)*2,2),y:.12};if(car){car.officerIds=car.officerIds.filter(o=>o!==id);if(!car.officerIds.length){car.abandonedUntil=clock()+ABANDONED_MS;car.speed=0;car.lights=false;car.targetId=null;car.path=[];structureChanged=true;}}
+  }return true;}
+  function dispatchCar(now){if(cars.filter(c=>!c.abandonedUntil).length>=MAX_PATROL_CARS)return false;
+    const available=[...officers.values()].filter(o=>o.health>0&&!o.carId&&o.home&&distance(o.position,o.home)<5);
+    const room=MAX_OFFICERS-officers.size;if(available.length+room<2)return false;
+    const road=nodes.map((p,node)=>({p,node})).sort((a,b)=>distance(a.p,layout.policeStation)-distance(b.p,layout.policeStation)).find(({p})=>world.vehicleClearAt({kind:'car',y:world.groundHeight(p.x,p.z),rotation:0},p.x,p.z,0,world.vehicleObstacles({id:'new-patrol'},[...vehicles.values(),...cars])));
+    if(!road)return false;const car={id:'police-car-'+nextCar++,kind:'car',x:road.p.x,y:world.groundHeight(road.p.x,road.p.z),z:road.p.z,rotation:0,speed:0,node:road.node,path:[],patrol:nextCar%4,planAt:0,targetId:null,lights:false,officerIds:[],deploying:true};
+    for(let seat=0;seat<2;seat++){let officer=available.shift();if(!officer){const id='police-'+nextOfficer++,home={...layout.policePoint(seat?-2:2,2),y:.12};officer={id,police:true,home,position:{...home},rotation:layout.policeStation.rotation,walking:false,seated:false,health:100,appearance:{...appearance},respawnAt:0,reinforcement:true};officers.set(id,officer);}officer.carId=car.id;officer.seat=seat;officer.seated=false;officer.targetAccountId=null;car.officerIds.push(officer.id);}
+    cars.push(car);structureChanged=true;return true;
+  }
   const visible=(a,b)=>world.shotBlock({x:a.x,y:a.y+1.4,z:a.z},{x:b.x,y:b.y+1.4,z:b.z})===null;
-  function suspectFrom(actor,radius=Infinity){const position=actor.position||actor,eligible=[...players.values()].filter(player=>{const r=getRecord(player);return r?.level>0&&!r.jailUntil&&player.health>0&&!player.ghost&&!layout.inSafeZone(player.position);}),locked=eligible.find(p=>p.accountId===actor.targetAccountId);const target=locked||eligible.filter(p=>distance(position,getRecord(p).lastPosition||p.position)<=radius).sort((a,b)=>distance(position,getRecord(a).lastPosition||a.position)-distance(position,getRecord(b).lastPosition||b.position))[0];actor.targetAccountId=target?.accountId||null;return target;}
+  function suspectFrom(actor,radius=Infinity){const position=actor.position||actor,eligible=[...players.values()].filter(player=>{const r=getRecord(player);return r?.level>0&&!r.jailUntil&&player.health>0&&!player.ghost;}),locked=eligible.find(p=>p.accountId===actor.targetAccountId),choices=eligible.filter(p=>p===locked||distance(position,getRecord(p).lastPosition||p.position)<=radius);
+    const load=p=>cars.filter(c=>c!==actor&&!c.abandonedUntil&&c.targetAccountId===p.accountId).length*2+(actor.position?[...officers.values()].filter(o=>o!==actor&&!o.carId&&o.health>0&&o.targetAccountId===p.accountId).length:0);
+    const minimum=choices.length?Math.min(...choices.map(load)):0,target=locked&&load(locked)<=minimum?locked:choices.sort((a,b)=>load(a)-load(b)||distance(position,getRecord(a).lastPosition||a.position)-distance(position,getRecord(b).lastPosition||b.position))[0];actor.targetAccountId=target?.accountId||null;return target;
+  }
   function formationPoint(officer,position){const i=Number(officer.id.split('-').at(-1))-1,a=i*Math.PI/3;return {...position,x:position.x+Math.cos(a)*1.05,z:position.z+Math.sin(a)*1.05};}
   function walk(officer,destination,dt,speed=9.2){let waypoint=destination;const blocked=world.crossesSolid({...officer.position,y:officer.position.y+.15},{...destination,y:officer.position.y+.15});
     if(blocked){let plan=walkPlans.get(officer.id);if(!plan||clock()>=plan.until||distance(plan.goal,destination)>4){plan={points:footPath(officer.position,destination),goal:{...destination},until:clock()+2200};walkPlans.set(officer.id,plan);}while(plan.points.length&&distance(officer.position,plan.points[0])<.3)plan.points.shift();if(plan.points.length)waypoint=plan.points[0];}
@@ -54,7 +68,7 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
     const heading=Math.atan2(dx,dz),side=Number(officer.id.split('-').at(-1))%2?1:-1;
     for(const turn of [0,.35*side,-.35*side,.7*side,-.7*side,1.25*side,-1.25*side,1.8*side,-1.8*side]){const rotation=heading+turn,x=officer.position.x+Math.sin(rotation)*travel,z=officer.position.z+Math.cos(rotation)*travel;
       if([...officers.values()].some(other=>other!==officer&&!other.seated&&other.health>0&&distance({x,z},other.position)<.58))continue;
-      if(world.clearAt(x,z,.32)&&!layout.inSafeZone({x,z})){officer.position={x,y:world.groundHeight(x,z),z};officer.rotation=rotation;officer.walking=true;break;}}
+      if(world.clearAt(x,z,.32)){officer.position={x,y:world.groundHeight(x,z),z};officer.rotation=rotation;officer.walking=true;break;}}
   }
   function crossesSafe(a,b){let enter=0,exit=1;const s=layout.safeZone;for(const [axis,half] of [['x',s.hx],['z',s.hz]]){const d=b[axis]-a[axis],lo=s[axis]-half,hi=s[axis]+half;if(Math.abs(d)<1e-9){if(a[axis]<lo||a[axis]>hi)return false;continue;}const t1=(lo-a[axis])/d,t2=(hi-a[axis])/d;enter=Math.max(enter,Math.min(t1,t2));exit=Math.min(exit,Math.max(t1,t2));if(enter>exit)return false;}return true;}
   function returnFire(officer,target,now){const record=target&&getRecord(target);officer.armed=Boolean(record?.armedUntil>now&&record.level&&!officer.seated);officer.aiming=false;officer.aimPitch=0;
@@ -69,17 +83,35 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
     if(damaged)damagePlayer(target,8,officer);
     broadcast({type:'police-shot',officerId:officer.id,targetId:target.id,start,end:stop,hit:damaged,damage:damaged?8:0,health:target.health,facing:officer.rotation,pitch:officer.aimPitch,serverTime:now});
   }
+  function planYield(car,heading,blockers,now){
+    // One deterministic priority prevents both drivers repeatedly yielding together.
+    const other=cars.find(c=>c!==car&&!c.abandonedUntil&&distance(car,c)<6);
+    if(other&&Number(car.id.split('-').at(-1))<Number(other.id.split('-').at(-1)))return false;
+    const forward={x:Math.sin(heading),z:Math.cos(heading)},right={x:-Math.cos(heading),z:Math.sin(heading)};
+    for(const side of [1,-1]){const back={x:car.x-forward.x*1.8,z:car.z-forward.z*1.8},siding={x:back.x+right.x*side*2.1,z:back.z+right.z*side*2.1},pass={x:car.x+forward.x*7+right.x*side*2.1,z:car.z+forward.z*7+right.z*side*2.1};
+      if(![back,siding,pass].every(p=>world.vehicleClearAt(car,p.x,p.z,heading,blockers)))continue;
+      if(![back,siding,pass].every(p=>layout.roads.some(r=>layout.inRect(p.x,p.z,r))))continue;
+      car.avoidance={points:[back,siding,pass],heading,until:now+6500};return true;
+    }return false;
+  }
+  function yieldStep(car,dt,blockers,now){const action=car.avoidance;if(!action)return false;if(now>action.until){car.avoidance=null;car.planAt=0;return false;}
+    while(action.points.length&&distance(car,action.points[0])<.12)action.points.shift();if(!action.points.length){car.avoidance=null;car.blockedAt=0;return false;}
+    const goal=action.points[0],d=distance(car,goal),step=Math.min(d,5*dt),x=car.x+(goal.x-car.x)/Math.max(.001,d)*step,z=car.z+(goal.z-car.z)/Math.max(.001,d)*step;
+    if(world.vehicleClearAt(car,x,z,action.heading,blockers)){const reverse=(goal.x-car.x)*Math.sin(action.heading)+(goal.z-car.z)*Math.cos(action.heading)<-.1;car.x=x;car.z=z;car.y=world.groundHeight(x,z);car.rotation=action.heading;car.speed=reverse?-5:5;}else car.speed=0;return true;
+  }
   function tick(){const now=clock(),dt=Math.max(0,Math.min(.1,(now-lastAt)/1000));lastAt=now;
+    for(let i=cars.length-1;i>=0;i--)if(cars[i].abandonedUntil&&now>=cars[i].abandonedUntil){cars.splice(i,1);structureChanged=true;}
     for(const player of players.values()){const r=getRecord(player);if(!r)continue;if(r.jailUntil){if(now>=r.jailUntil||paused()){r.jailUntil=0;release(player,layout.jailExit);broadcast({type:'police-wanted',id:player.id,stars:0,serverTime:now});}continue;}
       if(paused()||player.health<=0||player.ghost){r.score=0;r.level=0;r.arrestProgress=0;continue;}
-      if(r.level&&now>=(r.senseAt||0)){r.senseAt=now+200;const seen=[...officers.values()].some(o=>o.health>0&&distance(o.position,player.position)<85&&!layout.inSafeZone(player.position)&&visible(o.position,player.position));if(seen){r.lastSeen=now;r.lastPosition={...player.position};r.decayAt=now+60000;}}
+      if(r.level&&now>=(r.senseAt||0)){r.senseAt=now+200;const seen=[...officers.values()].some(o=>o.health>0&&distance(o.position,player.position)<85&&visible(o.position,player.position));if(seen){r.lastSeen=now;r.lastPosition={...player.position};r.decayAt=now+60000;}}
       if(r.level&&now>=r.decayAt&&now-r.lastCrime>=60000){r.level--;r.score=[0,1,4,10,20,35][r.level];r.decayAt=now+20000;broadcast({type:'police-wanted',id:player.id,stars:r.level,serverTime:now});}
       const close=[...officers.values()].some(o=>o.health>0&&!o.seated&&distance(o.position,player.position)<1.65&&Math.abs(o.position.y-player.position.y)<1.6&&visible(o.position,player.position));
       const slow=!player.vehicleId||Math.abs(vehicles.get(player.vehicleId)?.speed||0)<1.5;
-      r.arrestProgress=r.level&&close&&slow&&!layout.inSafeZone(player.position)?r.arrestProgress+dt:0;
+      r.arrestProgress=r.level&&close&&slow?r.arrestProgress+dt:0;
       if(r.arrestProgress>=1.2){r.level=0;r.score=0;r.arrestProgress=0;r.jailUntil=now+20000;arrest(player,r.jailUntil,layout.jail);broadcast({type:'police-wanted',id:player.id,stars:0,serverTime:now});}
     }
-    for(const car of cars){const target=paused()?null:suspectFrom(car),goal=target&&(getRecord(target).lastPosition||target.position),foot=car.officerIds.some(id=>!officers.get(id).seated&&officers.get(id).health>0),fastTarget=target?.vehicleId&&Math.abs(vehicles.get(target.vehicleId)?.speed||0)>6;
+    for(const car of cars){if(car.abandonedUntil){car.speed=0;car.lights=false;continue;}if(car.deploying){car.speed=0;for(const id of car.officerIds){const o=officers.get(id);if(!o.seated){if(distance(o.position,car)<1.8)o.seated=true;else walk(o,car,dt,6.2);}if(o.seated){const pose=o.seat?world.passengerPose(car):world.driverPose(car);o.position={x:pose.x,y:pose.y,z:pose.z};o.rotation=car.rotation;}}if(car.officerIds.every(id=>officers.get(id).seated))car.deploying=false;continue;}
+      const target=paused()?null:suspectFrom(car),goal=target&&(getRecord(target).lastPosition||target.position),foot=car.officerIds.some(id=>!officers.get(id).seated&&officers.get(id).health>0),fastTarget=target?.vehicleId&&Math.abs(vehicles.get(target.vehicleId)?.speed||0)>6;
       if(foot&&(!target||distance(car,goal)>70||fastTarget&&distance(car,goal)>25))car.recalling=true;
       if(!foot)car.recalling=false;
       const near=goal&&!car.recalling&&!fastTarget&&(distance(car,goal)<14||!car.path.length&&distance(car,goal)<45);car.targetId=target?.id||null;car.lights=Boolean(target);car.speed=0;
@@ -89,22 +121,27 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
       }}else{if(!car.path.length||now>=car.planAt&&distance(car,nodes[car.node])<.15){let goalNode;if(target){goalNode=nearest(goal);const occupied=cars.some(c=>c!==car&&c.targetId===target.id&&(c.goalNode===goalNode||distance(c,nodes[goalNode])<5));if(occupied){const alternatives=[...(edges.get(goalNode)||[])].filter(n=>!cars.some(c=>c!==car&&c.goalNode===n));if(alternatives.length)goalNode=alternatives.sort((a,b)=>distance(nodes[a],goal)-distance(nodes[b],goal))[0];}}else{goalNode=patrolPoints[car.patrol%4];if(car.node===goalNode){car.patrol++;goalNode=patrolPoints[car.patrol%4];}}car.goalNode=goalNode;car.path=path(car.node,goalNode);car.planAt=now+650;}
         const chaseSpeed=target?24+Math.min(4,getRecord(target).level*.8):8;let budget=chaseSpeed*dt;while(car.path.length&&budget>0){const next=nodes[car.path[0]],d=distance(car,next),step=Math.min(budget,d),heading=angle(car,next),x=car.x+Math.sin(heading)*step,z=car.z+Math.cos(heading)*step;
           const blockers=[...world.drivingObstacles,...[...vehicles.values()].map(c=>({x:c.x,z:c.z,hx:c.kind==='car'?.9:.4,hz:c.kind==='car'?1.8:1,rot:c.rotation,minY:c.y,maxY:c.y+1.8})),...cars.filter(c=>c!==car).map(c=>({x:c.x,z:c.z,hx:.9,hz:1.8,rot:c.rotation,minY:c.y,maxY:c.y+1.8}))];
-          if(!world.vehicleClearAt({...car,rotation:heading},x,z,heading,blockers))break;
-          car.x=x;car.z=z;car.y=world.groundHeight(x,z);car.rotation=heading;car.speed=chaseSpeed;budget-=step;if(d<=step+.001){car.node=car.path.shift();break;}else break;
+          if(car.avoidance&&yieldStep(car,dt,blockers,now))break;
+          if(!world.vehicleClearAt({...car,rotation:heading},x,z,heading,blockers)){car.blockedAt||=now;if(now-car.blockedAt>350)planYield(car,heading,blockers,now);break;}
+          car.blockedAt=0;car.x=x;car.z=z;car.y=world.groundHeight(x,z);car.rotation=heading;car.speed=chaseSpeed;budget-=step;if(d<=step+.001){car.node=car.path.shift();break;}else break;
         }
       }
       for(const id of car.officerIds){const o=officers.get(id);if(o.seated){const pose=o.seat?world.passengerPose(car):world.driverPose(car);o.position={x:pose.x,y:pose.y,z:pose.z};o.rotation=car.rotation;o.walking=false;}}
       for(const id of car.officerIds)returnFire(officers.get(id),target,now);
     }
     for(const o of officers.values()){
-      if(o.health<=0){if(now>=o.respawnAt){o.health=100;o.position={...(o.home||layout.policePoint(-4+(Number(o.id.slice(-1))%2)*3,3)),y:.12};o.seated=false;}continue;}
-      if(o.carId)continue;const target=paused()?null:suspectFrom(o,95);if(target)walk(o,formationPoint(o,getRecord(target).lastPosition||target.position),dt,9.2+Math.min(1.4,getRecord(target).level*.28));else if(distance(o.position,o.home)>.1)walk(o,o.home,dt,3.5);else{o.walking=false;o.rotation=layout.policeStation.rotation;}
+      if(o.health<=0){if(now>=o.respawnAt){o.health=100;o.position={...(o.home||layout.policePoint(-4+(Number(o.id.split('-').at(-1))%2)*3,3)),y:.12};o.seated=false;o.carId=null;o.targetAccountId=null;o.patrolFoot=true;delete o.fireAt;walkPlans.delete(o.id);structureChanged=true;}continue;}
+      if(o.carId)continue;const target=paused()?null:suspectFrom(o,95);if(target)walk(o,formationPoint(o,getRecord(target).lastPosition||target.position),dt,9.2+Math.min(1.4,getRecord(target).level*.28));else if(o.patrolFoot&&!paused()){const patrol=[layout.policePoint(-3,8),layout.policePoint(3,8),o.home],destination=patrol[(o.patrolStep||0)%patrol.length];if(distance(o.position,destination)<.4)o.patrolStep=(o.patrolStep||0)+1;else walk(o,destination,dt,3.5);}else if(distance(o.position,o.home)>.1)walk(o,o.home,dt,3.5);else{o.walking=false;o.rotation=layout.policeStation.rotation;}
       returnFire(o,target,now);
     }
     for(const [accountId,r] of offenders)if(![...players.values()].some(p=>p.accountId===accountId)&&now-Math.max(r.lastCrime,r.jailUntil)>180000)offenders.delete(accountId);
+    const suspects=paused()?[]:[...players.values()].filter(p=>p.health>0&&!p.ghost&&!isJailed(p)&&(getRecord(p)?.level||0)>0),pursuing=suspects.some(p=>getRecord(p).level>=2)||suspects.length>1,desired=Math.min(MAX_PATROL_CARS,Math.max(2,suspects.length*2+(suspects.some(p=>getRecord(p).level>=3)?1:0)));
+    if(!paused()&&now>=nextReinforcementAt&&(pursuing&&cars.filter(c=>!c.abandonedUntil).length<desired||cars.filter(c=>!c.abandonedUntil).length<2)){if(dispatchCar(now))nextReinforcementAt=now+12000;else nextReinforcementAt=now+3000;}
+    if(!pursuing){for(const [id,o] of officers)if(o.reinforcement&&!o.carId&&o.health>0&&distance(o.position,o.home)<.5){officers.delete(id);walkPlans.delete(id);structureChanged=true;}}
+    if(structureChanged){structureChanged=false;broadcast(snapshot());}
     if(now-lastBroadcast>=100){lastBroadcast=now;broadcast({type:'police-motion',serverTime:now,cars:cars.map(c=>[c.id,c.x,c.y,c.z,c.rotation,c.speed,c.lights]),officers:[...officers.values()].map(o=>[o.id,o.position.x,o.position.y,o.position.z,o.rotation,o.walking,o.seated,o.health,Boolean(o.armed),Boolean(o.aiming),o.aimPitch||0]),wanted:wanted()});}
   }
   function wanted(){return [...players.values()].map(p=>({id:p.id,stars:getRecord(p)?.level||0,jailUntil:getRecord(p)?.jailUntil||0}));}
-  function snapshot(){return {type:'police-state',serverTime:clock(),station:{x:layout.policeStation.x,z:layout.policeStation.z},cars:cars.map(({path,node,planAt,patrol,targetAccountId,goalNode,recalling,...car})=>({...car})),officers:[...officers.values()].map(({home,respawnAt,targetAccountId,fireAt,...o})=>({...o,position:{...o.position}})),wanted:wanted()};}
-  return {tick,crime,hurt,connect,isJailed,snapshot,officers,cars,roadNodes:nodes};
+  function snapshot(){return {type:'police-state',serverTime:clock(),station:{x:layout.policeStation.x,z:layout.policeStation.z},cars:cars.map(({path,node,planAt,patrol,targetAccountId,goalNode,recalling,avoidance,blockedAt,...car})=>({...car})),officers:[...officers.values()].map(({home,respawnAt,targetAccountId,fireAt,...o})=>({...o,position:{...o.position}})),wanted:wanted()};}
+  return {tick,crime,hurt,connect,isJailed,snapshot,officers,cars,roadNodes:nodes,MAX_OFFICERS,MAX_PATROL_CARS};
 }
