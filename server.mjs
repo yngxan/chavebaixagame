@@ -27,11 +27,16 @@ const clients = new Map();
 const players = new Map();
 const vehicles = new Map(LowkeyWorld.initialVehicles().map(vehicle=>[vehicle.id,vehicle]));
 const vehicleInputs = new Map();
+const pendingHijacks=new Map();
 const worldSnapshot = () => ({serverTime:Date.now(),segmentMs:LowkeyWorld.SEGMENT_MS,vehicles:[...vehicles.values()]});
+function cancelVehicleHijack(vehicle){const pending=pendingHijacks.get(vehicle?.id);if(!pending)return;clearTimeout(pending.timer);pendingHijacks.delete(vehicle.id);vehicle.hijacking=null;const thief=clients.get(pending.thiefId);if(thief){thief.hijackingVehicleId=null;send(thief.response,{type:'vehicle-hijack-cancel',vehicleId:vehicle.id});}}
 function releaseVehicle(player) {
   const vehicle=vehicles.get(player?.vehicleId);
-  if(!vehicle||vehicle.driverId!==player.id)return;
-  vehicle.driverId=null;vehicle.speed=0;vehicleInputs.delete(vehicle.id);player.vehicleId=null;
+  if(!vehicle)return;
+  const driver=vehicle.driverId===player.id,seat=(vehicle.passengerIds||[]).indexOf(player.id);
+  if(!driver&&seat<0)return;
+  if(driver){vehicle.driverId=null;vehicle.speed=0;vehicleInputs.delete(vehicle.id);}else vehicle.passengerIds.splice(seat,1);
+  player.vehicleId=null;player.vehicleSeat=null;
   const exit=LowkeyWorld.exitPosition(vehicle);if(exit)player.position=exit;
   player.walking=false;player.jumping=false;player.speed=0;player.motionTime=Date.now();player.motionReset=(player.motionReset||0)+1;
   lastKnownPositions.set(player.accountId,player.position);
@@ -534,7 +539,7 @@ const server = createServer(async (request, response) => {
     const profile = cleanProfile(authenticatedAccount.profile, authenticatedAccount.username.toUpperCase());
     const player = {
       id, accountId: authenticatedAccount.id, name: profile.name, appearance: profile.appearance,
-      position: lastKnownPositions.get(authenticatedAccount.id) || { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false, voiceSessionId: null, health: 100, glockEquipped: false,
+      position: lastKnownPositions.get(authenticatedAccount.id) || { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false, voiceSessionId: null, health: 100, glockEquipped: false, vehicleId:null,vehicleSeat:null,lastVehicleImpactAt:0,
     };
     response.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -553,9 +558,10 @@ const server = createServer(async (request, response) => {
       const current = clients.get(id);
       if (!current || current.response !== response) return;
       clients.delete(id);
-      const wasDriving = Boolean(players.get(id)?.vehicleId);
-      releaseVehicle(players.get(id));
-      if(wasDriving)broadcast({type:'world-state',...worldSnapshot()});
+      const departing=players.get(id),wasRiding=Boolean(departing?.vehicleId);
+      for(const vehicle of vehicles.values())if(vehicle.hijacking?.thiefId===id)cancelVehicleHijack(vehicle);
+      releaseVehicle(departing);
+      if(wasRiding)broadcast({type:'world-state',...worldSnapshot()});
       void queueVoiceMutation(current, () => cleanupSfuClient(current));
       players.delete(id);
       broadcast({ type: 'leave', id });
@@ -570,6 +576,7 @@ const server = createServer(async (request, response) => {
       const player = players.get(String(data.id || ''));
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       const now = Date.now();
+      if(client.hijackingVehicleId){response.writeHead(204);return response.end();}
       if(player.vehicleId){response.writeHead(204);return response.end();}
       if (client.deadUntil) {
         if (now < client.deadUntil) { response.writeHead(204); return response.end(); }
@@ -644,24 +651,49 @@ const server = createServer(async (request, response) => {
       if(!player||!client||client.accountId!==authenticatedAccount.id)return json(response,401,{error:'Jogador não conectado.'});
       if(client.deadUntil)return json(response,409,{error:'Espere voltar à praça.'});
       if(data.action==='enter') {
-        if(player.vehicleId)return json(response,409,{error:'Você já está dirigindo.'});
-        const vehicle=vehicles.get(String(data.vehicleId||''));
-        if(!vehicle)return json(response,404,{error:'Veículo não encontrado.'});
-        if(vehicle.driverId)return json(response,409,{error:'Esse veículo está ocupado.'});
+        if(player.vehicleId)return json(response,409,{error:'Você já está em um veículo.'});
+        const vehicle=vehicles.get(String(data.vehicleId||''));if(!vehicle)return json(response,404,{error:'Veículo não encontrado.'});
+        if(vehicle.wrecked||vehicle.hijacking)return json(response,409,{error:'Esse veículo não pode ser ocupado agora.'});
         if(Math.hypot(player.position.x-vehicle.x,player.position.z-vehicle.z)>3.2||Math.abs(player.position.y-vehicle.y)>1.5)return json(response,403,{error:'Chegue mais perto para entrar.'});
-        vehicle.driverId=player.id;vehicle.speed=0;player.vehicleId=vehicle.id;player.glockEquipped=false;player.glockAiming=false;
-        const pose=LowkeyWorld.driverPose(vehicle);player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.walking=false;player.jumping=false;player.motionTime=now;player.motionReset=(player.motionReset||0)+1;
-        vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:-1});
+        if(!vehicle.driverId){vehicle.driverId=player.id;player.vehicleSeat='driver';vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:-1});}
+        else if((vehicle.passengerIds||[]).length<1){vehicle.passengerIds||=[];vehicle.passengerIds.push(player.id);player.vehicleSeat='passenger';}
+        else return json(response,409,{error:'O veículo está cheio. Tente puxar o motorista para fora.'});
+        if(player.vehicleSeat==='driver')vehicle.speed=0;player.vehicleId=vehicle.id;player.glockEquipped=false;player.glockAiming=false;
+        const pose=player.vehicleSeat==='driver'?LowkeyWorld.driverPose(vehicle):LowkeyWorld.passengerPose(vehicle,0);player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.walking=false;player.jumping=false;player.speed=Math.abs(vehicle.speed);player.motionTime=now;player.motionReset=(player.motionReset||0)+1;
       } else if(data.action==='exit') {
-        const vehicle=vehicles.get(player.vehicleId);
-        if(!vehicle||vehicle.driverId!==player.id)return json(response,409,{error:'Você não está dirigindo.'});
+        const vehicle=vehicles.get(player.vehicleId);if(!vehicle||vehicle.driverId!==player.id&&!(vehicle.passengerIds||[]).includes(player.id))return json(response,409,{error:'Você não está em um veículo.'});
+        if(vehicle.hijacking)return json(response,409,{error:'Aguarde a ação terminar.'});
         if(Math.abs(vehicle.speed)>2.5)return json(response,409,{error:'Freie antes de sair.'});
         if(!LowkeyWorld.exitPosition(vehicle))return json(response,409,{error:'Sem espaço para sair. Afaste o veículo.'});
-        releaseVehicle(player);client.motionAt=now;client.movementCredits=4;client.lastSampleAt=undefined;
-        send(client.response,{type:'vehicle-exit',position:player.position});
+        releaseVehicle(player);client.motionAt=now;client.movementCredits=4;client.lastSampleAt=undefined;send(client.response,{type:'vehicle-exit',position:player.position});
+      } else if(data.action==='steal') {
+        if(player.vehicleId)return json(response,409,{error:'Saia do veículo atual primeiro.'});
+        const vehicle=vehicles.get(String(data.vehicleId||''));if(!vehicle)return json(response,404,{error:'Veículo não encontrado.'});
+        const victim=players.get(vehicle.driverId),victimClient=clients.get(vehicle.driverId);
+        if(vehicle.wrecked)return json(response,409,{error:'Esse veículo está destruído.'});if(vehicle.hijacking)return json(response,409,{error:'Alguém já está tentando roubar esse veículo.'});
+        if(!victim||!victimClient)return json(response,409,{error:'O veículo está livre.'});
+        if(Math.hypot(player.position.x-vehicle.x,player.position.z-vehicle.z)>2.6||Math.abs(player.position.y-vehicle.y)>1.5)return json(response,403,{error:'Chegue mais perto do motorista para puxá-lo.'});
+        if(Math.abs(vehicle.speed)>6)return json(response,409,{error:'O veículo está rápido demais para roubar.'});
+        const outside=LowkeyWorld.exitPosition(vehicle);if(!outside)return json(response,409,{error:'Não há espaço ao lado do veículo para puxar o motorista.'});
+        const hijack={thiefId:player.id,victimId:victim.id,startedAt:now,from:LowkeyWorld.driverPose(vehicle),outside};vehicle.hijacking=hijack;vehicle.speed=0;vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:-1});client.hijackingVehicleId=vehicle.id;
+        broadcast({type:'vehicle-hijack',vehicleId:vehicle.id,thiefId:player.id,victimId:victim.id,startedAt:now,duration:650});
+        const timer=setTimeout(()=>{
+          if(vehicle.hijacking!==hijack)return;
+          const thief=players.get(hijack.thiefId),thiefClient=clients.get(hijack.thiefId),oldDriver=players.get(hijack.victimId);
+          if(!thief||!thiefClient||!oldDriver||oldDriver.vehicleId!==vehicle.id){cancelVehicleHijack(vehicle);broadcast({type:'world-state',...worldSnapshot()});return;}
+          const outside=hijack.outside;
+          oldDriver.vehicleId=null;oldDriver.vehicleSeat=null;oldDriver.position=outside;oldDriver.rotation=vehicle.rotation;oldDriver.walking=false;oldDriver.jumping=true;oldDriver.motionTime=Date.now();oldDriver.motionReset=(oldDriver.motionReset||0)+1;
+          const victimSeat=(vehicle.passengerIds||[]).indexOf(oldDriver.id);if(victimSeat>=0)vehicle.passengerIds.splice(victimSeat,1);
+          const driverPose=LowkeyWorld.driverPose(vehicle);thief.vehicleId=vehicle.id;thief.vehicleSeat='driver';thief.position={x:driverPose.x,y:driverPose.y,z:driverPose.z};thief.rotation=vehicle.rotation;thief.walking=false;thief.jumping=false;thief.motionTime=Date.now();thief.motionReset=(thief.motionReset||0)+1;thief.glockEquipped=false;thief.glockAiming=false;
+          vehicle.driverId=thief.id;vehicle.hijacking=null;pendingHijacks.delete(vehicle.id);thiefClient.hijackingVehicleId=null;
+          victimClient.movementCredits=5;victimClient.motionAt=Date.now();victimClient.lastSampleAt=undefined;lastKnownPositions.set(oldDriver.accountId,outside);lastKnownPositions.set(thief.accountId,thief.position);
+          send(victimClient.response,{type:'vehicle-exit',position:outside,impulse:{x:Math.cos(vehicle.rotation)*2.7,y:4.5,z:-Math.sin(vehicle.rotation)*2.7},pulled:true});send(thiefClient.response,{type:'vehicle-hijack-complete',vehicleId:vehicle.id});
+          broadcast({type:'state',player:oldDriver});broadcast({type:'state',player:thief});broadcast({type:'world-state',...worldSnapshot()});
+        },650).unref();pendingHijacks.set(vehicle.id,{...hijack,timer});broadcast({type:'world-state',...worldSnapshot()});response.writeHead(202);return response.end(JSON.stringify({ok:true,hijacking:true}));
       } else if(data.action==='input') {
         const vehicle=vehicles.get(player.vehicleId);
         if(!vehicle||vehicle.driverId!==player.id)return json(response,403,{error:'Você não dirige esse veículo.'});
+        if(vehicle.wrecked||vehicle.hijacking)return json(response,409,{error:'O veículo não está disponível para dirigir.'});
         if(!Number.isFinite(data.throttle)||!Number.isFinite(data.steer)||Math.abs(data.throttle)>1||Math.abs(data.steer)>1||!Number.isSafeInteger(data.sequence))return json(response,400,{error:'Comando de direção inválido.'});
         const previous=vehicleInputs.get(vehicle.id);
         if(data.sequence<=(previous?.sequence??-1)||now-(previous?.at??0)<25){response.writeHead(204);return response.end();}
@@ -1139,11 +1171,26 @@ setInterval(()=>{
     const player=players.get(vehicle.driverId),client=clients.get(vehicle.driverId);
     if(!player||!client){vehicle.driverId=null;vehicle.speed=0;vehicleInputs.delete(vehicle.id);changed=true;continue;}
     if(client.deadUntil){releaseVehicle(player);send(client.response,{type:'vehicle-exit',position:player.position});changed=true;continue;}
-    occupied=true;const input=vehicleInputs.get(vehicle.id),controls=input&&now-input.at<350?input:{throttle:0,steer:0,brake:true};
-    const obstacles=[...LowkeyWorld.drivingObstacles,...[...vehicles.values()].filter(other=>other.id!==vehicle.id).map(other=>({x:other.x,z:other.z,r:other.kind==='car'?1.05:.46})),...[...players.values()].filter(other=>other.id!==player.id&&!other.vehicleId&&Math.abs(other.position.y-vehicle.y)<1.5).map(other=>({x:other.position.x,z:other.position.z,r:.32}))];
-    const steps=Math.max(1,Math.ceil(dt/.025));for(let i=0;i<steps;i++)LowkeyWorld.advanceVehicle(vehicle,controls,dt/steps,obstacles);
-    const pose=LowkeyWorld.driverPose(vehicle);player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.speed=Math.abs(vehicle.speed);player.walking=false;player.jumping=false;player.motionTime=now;
-    lastKnownPositions.set(player.accountId,player.position);
+    occupied=true;
+    if(vehicle.hijacking){const pending=pendingHijacks.get(vehicle.id);if(!pending||!players.has(pending.thiefId)){cancelVehicleHijack(vehicle);changed=true;}else{const victim=players.get(pending.victimId),progress=Math.max(0,Math.min(1,(now-pending.startedAt)/650));if(victim){victim.position={x:pending.from.x+(pending.outside.x-pending.from.x)*progress,y:pending.from.y+(pending.outside.y-pending.from.y)*progress+Math.sin(progress*Math.PI)*.24,z:pending.from.z+(pending.outside.z-pending.from.z)*progress};victim.motionTime=now;broadcast({type:'vehicle-hijack-motion',targetId:victim.id,vehicleId:vehicle.id,position:victim.position,rotation:vehicle.rotation,progress});}}}
+    const input=vehicleInputs.get(vehicle.id),controls=vehicle.wrecked||vehicle.hijacking?{throttle:0,steer:0,brake:true}:input&&now-input.at<350?input:{throttle:0,steer:0,brake:true};
+    const obstacles=[...LowkeyWorld.drivingObstacles];
+    for(const other of vehicles.values())if(other.id!==vehicle.id&&Math.hypot(other.x-vehicle.x,other.z-vehicle.z)>(vehicle.kind==='car'?1.65:1.0)+(other.kind==='car'?1.65:1.0))obstacles.push({x:other.x,z:other.z,r:other.kind==='car'?1.65:1});
+    const previousSpeed=vehicle.speed,steps=Math.max(1,Math.ceil(dt/.025));for(let i=0;i<steps;i++)LowkeyWorld.advanceVehicle(vehicle,controls,dt/steps,obstacles);
+    if(Math.abs(previousSpeed)>8&&vehicle.speed===0&&!controls.brake){const other=[...vehicles.values()].find(candidate=>candidate.id!==vehicle.id&&Math.hypot(candidate.x-vehicle.x,candidate.z-vehicle.z)<(vehicle.kind==='car'?1.65:1)+(candidate.kind==='car'?1.65:1)+.35);if(other){const dx=vehicle.x-other.x,dz=vehicle.z-other.z,length=Math.hypot(dx,dz)||1,force=Math.min(11,5+Math.abs(previousSpeed)*.3),impulse={x:dx/length*force,y:8,z:dz/length*force};for(const crashed of [vehicle,other]){crashed.speed=0;if(crashed.kind==='car'){crashed.wrecked=true;crashed.health=0;}vehicleInputs.set(crashed.id,{throttle:0,steer:0,brake:true,at:now,sequence:vehicleInputs.get(crashed.id)?.sequence??-1});for(const id of [crashed.driverId,...(crashed.passengerIds||[])]){const occupant=players.get(id),occupantClient=clients.get(id);if(!occupant||!occupantClient)continue;const eject={x:Math.cos(crashed.rotation)*(occupant===player?1:-1)*4.5,y:7,z:-Math.sin(crashed.rotation)*(occupant===player?1:-1)*4.5};releaseVehicle(occupant);occupantClient.movementCredits=5;occupantClient.motionAt=now;send(occupantClient.response,{type:'vehicle-exit',position:occupant.position,impulse:eject,crashed:true});broadcast({type:'state',player:occupant});}changed=true;}if(vehicle.driverId!==player.id)continue;}}
+    if(vehicle.kind==='car'&&!vehicle.wrecked&&!vehicle.hijacking&&Math.abs(previousSpeed)>10&&vehicle.speed===0&&!controls.brake){vehicle.wrecked=true;vehicle.health=0;vehicle.speed=0;vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:input?.sequence??-1});for(const id of [vehicle.driverId,...(vehicle.passengerIds||[])]){const occupant=players.get(id),occupantClient=clients.get(id);if(!occupant||!occupantClient)continue;releaseVehicle(occupant);occupantClient.movementCredits=5;occupantClient.motionAt=now;send(occupantClient.response,{type:'vehicle-exit',position:occupant.position,impulse:{x:Math.cos(vehicle.rotation)*4,y:5,z:-Math.sin(vehicle.rotation)*4},crashed:true});broadcast({type:'state',player:occupant});}changed=true;if(vehicle.driverId!==player.id)continue;}
+    for(const target of players.values()){
+      if(target.vehicleId||target.health<=0||target.id===vehicle.driverId||Math.abs(target.position.y-vehicle.y)>1.25||now-(target.lastVehicleImpactAt||0)<1100)continue;
+      const relative={x:target.position.x-vehicle.x,z:target.position.z-vehicle.z},c=Math.cos(vehicle.rotation),s=Math.sin(vehicle.rotation),localX=relative.x*c-relative.z*s,localZ=relative.x*s+relative.z*c;
+      const hit=vehicle.kind==='car'?Math.abs(localX)<1.12&&Math.abs(localZ)<1.86:Math.hypot(localX,localZ)<.60;
+      if(!hit||Math.abs(vehicle.speed)<4.5)continue;
+      const direction=Math.sign(vehicle.speed)||1,damage=vehicle.kind==='car'?38:23,impulse={x:Math.sin(vehicle.rotation)*direction*Math.min(11,4.5+Math.abs(vehicle.speed)*.32),y:Math.min(10,5+Math.abs(vehicle.speed)*.20),z:Math.cos(vehicle.rotation)*direction*Math.min(11,4.5+Math.abs(vehicle.speed)*.32)};
+      target.lastVehicleImpactAt=now;target.health=Math.max(0,target.health-damage);const targetClient=clients.get(target.id),deadUntil=target.health===0?now+2200:0;
+      if(targetClient){targetClient.movementCredits=5;targetClient.motionAt=now;if(deadUntil)targetClient.deadUntil=deadUntil;send(targetClient.response,{type:'vehicle-impact',vehicleId:vehicle.id,kind:vehicle.kind,targetId:target.id,damage,impulse,time:now});send(targetClient.response,{type:'weapon-health',targetId:target.id,health:target.health,deadUntil});}
+      broadcast({type:'vehicle-impact',vehicleId:vehicle.id,kind:vehicle.kind,targetId:target.id,damage,impulse,time:now});if(deadUntil)broadcast({type:'glock-elimination',shooterId:player.id,targetId:target.id,headshot:false,time:now});changed=true;
+    }
+    const driverPose=LowkeyWorld.driverPose(vehicle);player.position={x:driverPose.x,y:driverPose.y,z:driverPose.z};player.rotation=driverPose.rotation;player.speed=Math.abs(vehicle.speed);player.walking=false;player.jumping=false;player.motionTime=now;player.vehicleSeat='driver';lastKnownPositions.set(player.accountId,player.position);
+    for(const passengerId of vehicle.passengerIds||[]){const passenger=players.get(passengerId);if(!passenger)continue;const pose=LowkeyWorld.passengerPose(vehicle);passenger.position={x:pose.x,y:pose.y,z:pose.z};passenger.rotation=pose.rotation;passenger.speed=Math.abs(vehicle.speed);passenger.walking=false;passenger.jumping=false;passenger.motionTime=now;passenger.vehicleSeat='passenger';lastKnownPositions.set(passenger.accountId,passenger.position);}
   }
   if(changed||(occupied&&now-lastVehicleBroadcast>=100)){lastVehicleBroadcast=now;broadcast({type:'world-state',...worldSnapshot()});}
 },50).unref();
@@ -1199,3 +1246,4 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
   for (const client of clients.values()) client.response.end();
   server.close(() => process.exit(0));
 });
+
