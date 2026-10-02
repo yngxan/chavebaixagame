@@ -24,7 +24,7 @@
     roads.push({x:0,z:side*78.25,hx:ROAD_HALF_WIDTH,hz:37.75,axis:'z'});
     roads.push({x:side*76.25,z:0,hx:39.75,hz:ROAD_HALF_WIDTH,axis:'x'});
   }
-  const inRect=(x,z,r,padding=0)=>Math.abs(x-r.x)<=r.hx+padding&&Math.abs(z-r.z)<=r.hz+padding;
+  const inRect=(x,z,r,padding=0)=>{const c=Math.cos(r.rot||0),s=Math.sin(r.rot||0),dx=x-r.x,dz=z-r.z;return Math.abs(dx*c-dz*s)<=r.hx+padding&&Math.abs(dx*s+dz*c)<=r.hz+padding;};
   function groundKind(x,z){
     if(x<bounds.minX||x>bounds.maxX||z<bounds.minZ||z>bounds.maxZ)return null;
     if(Math.abs(x)>MAP_HALF_SIZE||Math.abs(z)>MAP_HALF_SIZE){let floor=null;for(const surface of coast.surfaces)if(inRect(x,z,surface)&&(!floor||surface.y>floor.y))floor=surface;return floor?.kind||null;}
@@ -71,18 +71,36 @@
       if(groundKind(t.x,t.z)==='sidewalk'&&!roads.some(o=>o!==r&&inRect(t.x,t.z,o,2.5)))trees.push({...t,size:.8+random()*.25});
     }
   }
-  const obstacles=buildings.map(b=>({x:b.x,z:b.z,hx:b.width/2,hz:b.depth/2,rot:b.rotation,minY:.12,maxY:b.height+(b.kind==='house'?2.32:.8)}));
+  let shopIndex=0;for(const b of buildings)if(b.kind==='shop')b.shopName=['CAFÉ LOWKEY','MERCADO','GARAGEM','BOUTIQUE'][shopIndex++%4];
+  const garage=buildings.find(b=>b.shopName==='GARAGEM');garage.kind='garage';
+  const garagePoint=(x,z)=>({x:garage.x+x*Math.cos(garage.rotation)+z*Math.sin(garage.rotation),z:garage.z-x*Math.sin(garage.rotation)+z*Math.cos(garage.rotation)});
+  const garageFloor={x:garage.x,z:garage.z,hx:garage.width/2,hz:garage.depth/2,rot:garage.rotation,y:.12,kind:'garage',ground:true};
+  entrances.push(garageFloor,{...garagePoint(0,8),hx:6.4,hz:1.5,rot:garage.rotation,y:.12,kind:'garage-access',ground:true});
+  const garageBays=[{id:'garage-car',kind:'car',...garagePoint(-3,0),rotation:garage.rotation},{id:'garage-moto',kind:'moto',...garagePoint(3,0),rotation:garage.rotation}];
+  const boutiques=buildings.filter(b=>b.shopName==='BOUTIQUE');
+  const storePoint=(b,x,z)=>({x:b.x+x*Math.cos(b.rotation)+z*Math.sin(b.rotation),z:b.z-x*Math.sin(b.rotation)+z*Math.cos(b.rotation)});
+  for(const b of boutiques){b.kind='boutique';entrances.push({x:b.x,z:b.z,hx:7.5,hz:6.5,rot:b.rotation,y:.12,kind:'boutique',ground:true},{...storePoint(b,0,7.5),hx:1.4,hz:1.1,rot:b.rotation,y:.12,kind:'boutique-access',ground:true});}
+  const obstacles=buildings.filter(b=>b!==garage&&b.kind!=='boutique').map(b=>({x:b.x,z:b.z,hx:b.width/2,hz:b.depth/2,rot:b.rotation,minY:.12,maxY:b.height+(b.kind==='house'?2.32:.8)}));
+  for(const b of boutiques)for(const [x,z,hx,hz,minY,maxY] of [[-7.35,0,.15,6.5,.12,4.52],[7.35,0,.15,6.5,.12,4.52],[0,-6.35,7.5,.15,.12,4.52],[-4.4,6.35,3.1,.15,.12,4.52],[4.4,6.35,3.1,.15,.12,4.52],[0,6.35,1.3,.15,3.3,4.52],[0,0,7.5,6.5,4.4,4.7],[-2.7,-.7,1.1,1.3,.12,1.1],[2.7,-.7,1.1,1.3,.12,1.1],[4.6,-4.7,1.6,.65,.12,1.2]])obstacles.push({...storePoint(b,x,z),hx,hz,rot:b.rotation,minY,maxY,kind:'boutique-fixture'});
+  for(const [x,z,hx,hz,minY,maxY] of [[-7.35,0,.15,6.5,.12,4.52],[7.35,0,.15,6.5,.12,4.52],[0,-6.35,7.5,.15,.12,4.52],[0,6.35,7.5,.15,3.75,4.52],[0,0,7.5,6.5,4.4,4.7]])obstacles.push({...garagePoint(x,z),hx,hz,rot:garage.rotation,minY,maxY,kind:'garage-wall'});
   obstacles.push(...trees.map(t=>({x:t.x,z:t.z,r:.26*t.size,minY:.12,maxY:3.8*t.size})),...lamps.map(l=>({x:l.x,z:l.z,r:.10,minY:.12,maxY:4.8})));
   const barrier=(x,z,hx,hz,height=1.2)=>coast.obstacles.push({x,z,hx,hz,minY:1.4,maxY:1.4+height,kind:'rail'});
   // Rails leave a continuous open route from the city, up the ramp and through the park.
   for(const side of [-1,1]){
-    barrier(side*5,181,.1,21);barrier(side*36,224,.12,22);
+    barrier(side*5,187,.1,15);barrier(side*36,224,.12,22);
     barrier(side*20.55,202,15.45,.12);barrier(side*21.55,246,14.45,.12);
     barrier(side*7,258.5,.1,12.5);
   }
   barrier(0,271,7,.12);
-  // Moving rides are scenery; their footprints stay fixed and authoritative.
-  coast.obstacles.push({x:-18,z:223,hx:17.3,hz:5.5,minY:1.4,maxY:37},{x:16,z:220,hx:14,hz:12,minY:1.4,maxY:15},{x:-57,z:176,hx:2.4,hz:1.7,minY:1.1,maxY:4.3});
+  // Collide with visible supports, not huge invisible boxes enclosing whole rides.
+  for(const side of [-1,1])for(const depth of [-3,3])for(let i=0;i<12;i++){
+    const t=(i+.5)/12;coast.obstacles.push({x:-18+side*9*(1-t),z:223+depth*(1-t*.5),hx:.62,hz:.31,minY:1.4+i/12*18.8,maxY:1.4+(i+1)/12*18.8,kind:'wheel-support'});
+  }
+  coast.trackPoints=[[5,4.5,212],[6,6,226],[17,13,228],[27,8,223],[26,4.5,211],[16,3.5,209]];
+  coast.trackPoint=t=>{const p=t*coast.trackPoints.length,i=Math.floor(p),u=p-i,n=coast.trackPoints.length;return [0,1,2].map(axis=>{const a=coast.trackPoints[(i+n-1)%n][axis],b=coast.trackPoints[i%n][axis],c=coast.trackPoints[(i+1)%n][axis],d=coast.trackPoints[(i+2)%n][axis];return .5*((2*b)+(-a+c)*u+(2*a-5*b+4*c-d)*u*u+(-a+3*b-3*c+d)*u*u*u);});};
+  coast.trackSupports=Array.from({length:14},(_,i)=>coast.trackPoint(i/14));
+  for(const [x,y,z] of coast.trackSupports)coast.obstacles.push({x,z,r:.19,minY:1.4,maxY:y-.2,kind:'coaster-support'});
+  coast.obstacles.push({x:-57,z:176,hx:2.4,hz:1.7,minY:1.1,maxY:4.3});
   for(const [x,z,color,name] of [[-23,240,0xe85a51,'PIPOCA'],[24,239,0x48c6bb,'ARCADE'],[17,206,0xf4b943,'SORVETE'],[-16,207,0x9b70d2,'LOWKEY PIER']]){
     const kiosk={x,z,width:7,depth:4.6,height:3.8,color,name};coast.kiosks.push(kiosk);coast.obstacles.push({x,z,hx:3.5,hz:2.3,minY:1.4,maxY:5.5});
   }
@@ -95,5 +113,5 @@
   for(const side of [-1,1])coast.lamps.push({x:side*8,z:235,y:1.4});
   for(const p of coast.lamps)coast.obstacles.push({x:p.x,z:p.z,r:.085,minY:p.y,maxY:p.y+4.5});
   obstacles.push(...coast.obstacles);
-  globalThis.LowkeyCityLayout={MAP_HALF_SIZE,bounds,coast,roads,surfaces,entrances,buildings,trees,lamps,obstacles,groundKind,inRect};
+  globalThis.LowkeyCityLayout={MAP_HALF_SIZE,bounds,coast,roads,surfaces,entrances,buildings,trees,lamps,obstacles,groundKind,inRect,garage,garageBays,garagePoint,boutiques,storePoint};
 })();

@@ -71,6 +71,7 @@
     const bounds=city.bounds;
     if (x<bounds.minX+1+radius||x>bounds.maxX-1-radius||z<bounds.minZ+1+radius||z>bounds.maxZ-1-radius||groundHeight(x,z)===null) return false;
     for (const obstacle of obstacles) {
+      const floor=groundHeight(x,z)??-.05;if(obstacle.minY!==undefined&&(obstacle.minY>floor+1.8||obstacle.maxY<floor+.02))continue;
       const dx=x-obstacle.x, dz=z-obstacle.z;
       if (obstacle.r !== undefined) { if (Math.hypot(dx,dz) < obstacle.r+radius) return false; }
       else {
@@ -83,7 +84,21 @@
   }
   function initialVehicles() {
     return [{id:'plaza-car',kind:'car',x:-14.5,y:-.05,z:5,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:250,wrecked:false,wheelieAngle:0},
-      {id:'plaza-moto',kind:'moto',x:-13.5,y:-.05,z:8.8,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:100,wrecked:false,wheelieAngle:0}];
+      {id:'plaza-moto',kind:'moto',x:-13.5,y:-.05,z:8.8,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:100,wrecked:false,wheelieAngle:0},...city.garageBays.map(b=>garageVehicle(b))];
+  }
+  function garageVehicle(bay,id=bay.id){return{id,kind:bay.kind,x:bay.x,y:groundHeight(bay.x,bay.z),z:bay.z,rotation:bay.rotation,speed:0,steering:0,driverId:null,passengerIds:[],health:bay.kind==='car'?250:100,wrecked:false,wheelieAngle:0,garageBay:bay.id};}
+  function replenishGarage(records,now){
+    const added=[];for(const bay of city.garageBays){const stock=[...records.values()].find(v=>v.garageBay===bay.id);
+      if(stock&&!stock.wrecked&&Math.hypot(stock.x-bay.x,stock.z-bay.z)<5)continue;
+      // Do not spawn a replacement on top of a parked or abandoned vehicle.
+      if([...records.values()].some(v=>Math.hypot(v.x-bay.x,v.z-bay.z)<(v.kind==='car'?2.9:1.7)))continue;
+      if(records.size>=48){const unused=[...records.values()].find(v=>v.id.startsWith('garage-')&&!v.garageBay&&!v.driverId&&!v.passengerIds?.length&&!v.hijacking);if(!unused)continue;records.delete(unused.id);}
+      if(stock)stock.garageBay=null;const id=bay.id+'-'+now+'-'+records.size,next=garageVehicle(bay,id);records.set(id,next);added.push(next);
+    }return added;
+  }
+  function vehicleClearAt(vehicle,x,z,rotation=vehicle.rotation,obstacles=drivingObstacles){
+    const moto=vehicle.kind==='moto',radius=moto?.29:.78;
+    return [-1,0,1].every(side=>clearAt(x+Math.sin(rotation)*side*(moto?.76:1.18),z+Math.cos(rotation)*side*(moto?.76:1.18),radius,obstacles));
   }
   function vehicleInteraction(vehicle,position) {
     const dx=position.x-vehicle.x,dz=position.z-vehicle.z,c=Math.cos(vehicle.rotation),s=Math.sin(vehicle.rotation);
@@ -93,8 +108,10 @@
   function advanceVehicle(vehicle, input, dt, obstacles = drivingObstacles) {
     vehicle.collision=null;
     dt=clamp(dt,0,.05);const moto=vehicle.kind==='moto',throttle=clamp(Number(input.throttle)||0,-1,1),steer=clamp(Number(input.steer)||0,-1,1);
-    const maximum=moto?27:22,acceleration=moto?11:9,radius=moto?.46:1.05;
-    if (input.brake) vehicle.speed *= Math.exp(-8*dt);
+    const maximum=moto?27:22,acceleration=moto?11:9;
+    const drifting=Boolean(input.brake&&Math.abs(steer)>.12&&(Math.abs(vehicle.speed)>.5||throttle));vehicle.drifting=drifting;
+    if(drifting){vehicle.speed*=Math.exp(-(moto?1.65:1.2)*dt);vehicle.speed=clamp(vehicle.speed+throttle*acceleration*.72*dt,-6,maximum);}
+    else if (input.brake) vehicle.speed *= Math.exp(-8*dt);
     else if (throttle) {
       if (vehicle.speed*throttle<0) vehicle.speed *= Math.exp(-6*dt);
       vehicle.speed=clamp(vehicle.speed+throttle*acceleration*dt,-6,maximum);
@@ -102,18 +119,23 @@
     if (Math.abs(vehicle.speed)<.035)vehicle.speed=0;
     const oldRotation=vehicle.rotation;
     // Ease the steering rack back to center instead of instantly flipping lock.
-    vehicle.steering=(Number(vehicle.steering)||0)+(steer-(Number(vehicle.steering)||0))*(1-Math.exp(-7*dt));
+    vehicle.steering=(Number(vehicle.steering)||0)+(steer-(Number(vehicle.steering)||0))*(1-Math.exp(-(steer?10:13)*dt));
     // Reduce steering lock at speed and bound yaw rate to avoid spinning in place.
-    const steeringAngle=vehicle.steering*(moto?.43:.50)/(1+Math.abs(vehicle.speed)*.055);
-    const yawRate=clamp(-vehicle.speed*Math.tan(steeringAngle)/(moto?1.75:2.55),-1.25,1.25);
+    const steeringAngle=vehicle.steering*(moto?.62:.66)/(1+Math.abs(vehicle.speed)*.065);
+    const lock=drifting?(moto?2.2:2.8):(moto?1.25:1.15);
+    const yawRate=clamp(-vehicle.speed*Math.tan(steeringAngle)/(moto?1.65:2.55)*(drifting?2.8:1),-lock,lock);
     vehicle.rotation += yawRate*dt;
     vehicle.rotation=Math.atan2(Math.sin(vehicle.rotation),Math.cos(vehicle.rotation));
-    const middleRotation=oldRotation+yawRate*dt*.5;
+    const heading=Number.isFinite(vehicle.driftHeading)?vehicle.driftHeading:oldRotation;
+    const headingDelta=Math.atan2(Math.sin(vehicle.rotation-heading),Math.cos(vehicle.rotation-heading));
+    vehicle.driftHeading=heading+headingDelta*(1-Math.exp(-(drifting?1.8:16)*dt));
+    const middleRotation=drifting||Math.abs(headingDelta)>.03?vehicle.driftHeading:oldRotation+yawRate*dt*.5;
     const dx=Math.sin(middleRotation)*vehicle.speed*dt,dz=Math.cos(middleRotation)*vehicle.speed*dt;
     const steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/.12));
     for(let step=0;step<steps;step++) {
       const x=vehicle.x+dx/steps,z=vehicle.z+dz/steps;
-      if (!clearAt(x,z,radius,obstacles)) { const obstacle=clearAt(x,z,radius,[])?obstacles.find(item=>!clearAt(x,z,radius,[item])):null;vehicle.collision={vehicleId:obstacle?.vehicleId||null,speed:Math.abs(vehicle.speed)};vehicle.speed=0;vehicle.rotation=oldRotation;break; }
+      const rotation=oldRotation+yawRate*dt*(step+1)/steps;
+      if (!vehicleClearAt(vehicle,x,z,rotation,obstacles)) { const obstacle=vehicleClearAt(vehicle,x,z,rotation,[])?obstacles.find(item=>!vehicleClearAt(vehicle,x,z,rotation,[item])):null;vehicle.collision={vehicleId:obstacle?.vehicleId||null,speed:Math.abs(vehicle.speed)};vehicle.speed=0;vehicle.rotation=oldRotation;vehicle.driftHeading=oldRotation;break; }
       vehicle.x=x;vehicle.z=z;
     }
     vehicle.y=groundHeight(vehicle.x,vehicle.z)??-.05;
@@ -161,5 +183,5 @@
     const face=Math.atan2(seat.x-approach.x,seat.z-approach.z),turn=Math.atan2(Math.sin(vehicle.rotation-face),Math.cos(vehicle.rotation-face));
     return {...position,rotation:face+turn*enter,scale:1+(seat.scale-1)*enter,progress,pull:smooth((progress-.32)/.38),enter};
   }
-  globalThis.LowkeyWorld={MAP_HALF_SIZE,city,SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,waterHeight,waterAt,isSwimming,advanceSwimmer,keepCameraAboveGround,constrainCamera,shotBlock,crossesSolid,initialVehicles,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose};
+  globalThis.LowkeyWorld={MAP_HALF_SIZE,city,SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,waterHeight,waterAt,isSwimming,advanceSwimmer,keepCameraAboveGround,constrainCamera,shotBlock,crossesSolid,initialVehicles,garageVehicle,replenishGarage,vehicleClearAt,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose};
 })();

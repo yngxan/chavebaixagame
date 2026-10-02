@@ -50,7 +50,9 @@ test('actual movement and landing code walks from the city up the ramp and acros
 });
 
 test('rides, kiosks and guardrails block entry while the park path stays open',()=>{
-  for(const [x,z] of [[-18,223],[16,220],[-23,240],[36,224],[0,271]])assert.equal(world.clearAt(x,z,.32),false);
+  for(const [x,z] of [[-23,240],[36,224],[0,271]])assert.equal(world.clearAt(x,z,.32),false);
+  for(const [x,z] of [[-18,223],[16,220]])assert.equal(world.clearAt(x,z,.32),true,'empty space below a ride is walkable');
+  for(const [x,y,z] of city.coast.trackSupports)assert.equal(world.clearAt(x,z,.32),false,'visible track column blocks movement');
   for(const z of [125,156,171,180,201,214,224,240,260])assert.equal(world.clearAt(0,z,.32),true,`open center route at ${z}`);
   assert.equal(world.clearAt(90,225,.32),false,'cars cannot drive on ocean');
   assert.ok(city.coast.obstacles.filter(o=>o.kind==='rail').length>=10);

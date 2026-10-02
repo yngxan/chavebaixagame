@@ -4,6 +4,52 @@
     const boxGeo=new THREE.BoxGeometry(1,1,1),poleGeo=new THREE.CylinderGeometry(1,1,1,8),batches=new Map(),materials=new Map();
     const material=(color)=>{if(!materials.has(color))materials.set(color,new THREE.MeshStandardMaterial({color,roughness:.8,flatShading:true}));return materials.get(color);};
     const sand=material(0xe9cf98),wetSand=material(0xc4b587),wood=material(0xb37d4d),woodLight=material(0xd0a572),darkWood=material(0x624830),white=material(0xf6f0db),teal=material(0x3daab2),red=material(0xe45252),yellow=material(0xf8c94b),purple=material(0x9369c5),steel=material(0xabbfc8),dark=material(0x263c48),pavement=material(0xd9d2bb),leaf=material(0x4e9d48),leafLight=material(0x81b443),lampMat=material(0xffd9a0);
+    sand.onBeforeCompile=shader=>{
+      shader.vertexShader='varying vec2 vSandPosition;\n'+shader.vertexShader;
+      shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>',`#include <begin_vertex>
+        vec4 sandPosition=vec4(position,1.);
+        #ifdef USE_INSTANCING
+        sandPosition=instanceMatrix*sandPosition;
+        #endif
+        vSandPosition=(modelMatrix*sandPosition).xz;`);
+      shader.fragmentShader='varying vec2 vSandPosition;\n'+shader.fragmentShader;
+      shader.fragmentShader=shader.fragmentShader.replace('#include <map_fragment>',`#include <map_fragment>
+        float grain=fract(sin(dot(floor(vSandPosition*85.),vec2(127.1,311.7)))*43758.5453);
+        float ripple=sin(vSandPosition.y*19.+sin(vSandPosition.x*.65)*2.);
+        diffuseColor.rgb*=.95+grain*.1+ripple*.025;`);
+    };
+    // Two fixed-size instance pools: no per-step scene objects or network messages.
+    const traces=[],traceSources=new Map(),traceDummy=new THREE.Object3D(),capacity=640;
+    for(const tire of [false,true]){
+      const pixels=new Uint8Array(64*128*4);
+      for(let y=0;y<128;y++)for(let x=0;x<64;x++){
+        const u=(x-32)/32,v=y/128,heel=u*u/.48+Math.pow((v-.18)/.16,2)<1,sole=u*u/.72+Math.pow((v-.65)/.29,2)<1;
+        const ink=tire?Math.abs(u)<.85&&((y+Math.floor(Math.abs(u)*19))%20<9):heel||sole;
+        const i=(y*64+x)*4;pixels[i]=pixels[i+1]=pixels[i+2]=255;pixels[i+3]=ink?190:0;
+      }
+      const texture=new THREE.DataTexture(pixels,64,128,THREE.RGBAFormat);texture.needsUpdate=true;texture.magFilter=THREE.LinearFilter;
+      const geo=new THREE.PlaneGeometry(1,1),born=new THREE.InstancedBufferAttribute(new Float32Array(capacity).fill(-1e6),1);geo.setAttribute('traceBorn',born);
+      const mat=new THREE.ShaderMaterial({transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,uniforms:{now:{value:0},life:{value:tire?28:18},stamp:{value:texture}},vertexShader:`attribute float traceBorn; varying vec2 vUv; varying float vBorn; void main(){vUv=uv;vBorn=traceBorn;gl_Position=projectionMatrix*modelViewMatrix*instanceMatrix*vec4(position,1.);}`,fragmentShader:`uniform float now;uniform float life;uniform sampler2D stamp;varying vec2 vUv;varying float vBorn;void main(){float age=now-vBorn;float alpha=texture2D(stamp,vUv).a*(1.-smoothstep(life*.55,life,age))*.45;if(age<0.||alpha<.005)discard;gl_FragColor=vec4(.35,.27,.15,alpha);}`});
+      const mesh=new THREE.InstancedMesh(geo,mat,capacity);mesh.frustumCulled=false;mesh.renderOrder=1;scene.add(mesh);traces.push({mesh,born,index:0,tire});
+    }
+    function stampTrace(pool,x,z,rotation,now,side=0){
+      traceDummy.position.set(x+Math.cos(rotation)*side,-.043,z-Math.sin(rotation)*side);traceDummy.rotation.set(-Math.PI/2,0,-rotation);traceDummy.scale.set(pool.tire?.14:.15,pool.tire?.47:.29,1);traceDummy.updateMatrix();
+      pool.mesh.setMatrixAt(pool.index,traceDummy.matrix);pool.born.setX(pool.index,now/1000);pool.index=(pool.index+1)%capacity;pool.mesh.instanceMatrix.needsUpdate=true;pool.born.needsUpdate=true;
+    }
+    function updateTracks(now,actors,vehicles){
+      for(const p of traces)p.mesh.material.uniforms.now.value=now/1000;
+      const live=new Set();for(const source of [...actors,...vehicles]){
+        live.add(source.id);const sandHere=LowkeyCityLayout.coast.surfaces.some(s=>s.kind==='sand'&&LowkeyCityLayout.inRect(source.x,source.z,s));
+        const old=traceSources.get(source.id);traceSources.set(source.id,old||{x:source.x,z:source.z,side:1});
+        if(!sandHere||source.disabled||Math.abs(source.y+.05)>.35){traceSources.set(source.id,{x:source.x,z:source.z,side:1});continue;}
+        if(!old)continue;const distance=Math.hypot(source.x-old.x,source.z-old.z),spacing=source.kind?.38:.62;
+        if(distance>5){old.x=source.x;old.z=source.z;continue;}
+        const count=Math.min(12,Math.floor(distance/spacing));if(!count)continue;
+        const dx=(source.x-old.x)/distance,dz=(source.z-old.z)/distance,rotation=source.rotation||0;
+        for(let i=0;i<count;i++){old.x+=dx*spacing;old.z+=dz*spacing;if(source.kind){for(const side of source.kind==='car'?[-.72,.72]:[0])stampTrace(traces[1],old.x,old.z,rotation,now,side);}else{stampTrace(traces[0],old.x,old.z,rotation,now,old.side*.1);old.side*=-1;}}
+      }
+      for(const id of traceSources.keys())if(!live.has(id))traceSources.delete(id);
+    }
     lampMat.emissive.set(0xffbf65);
     function part(mat,x,y,z,sx,sy,sz,geo=boxGeo,q=null,cast=true){const key=`${mat.uuid}:${geo.uuid}:${cast}`,batch=batches.get(key)||{mat,geo,cast,items:[]};batch.items.push({x,y,z,sx,sy,sz,q});batches.set(key,batch);}
     function beam(a,b,width,mat,depth=width){const start=new THREE.Vector3(...a),end=new THREE.Vector3(...b),delta=end.clone().sub(start),middle=start.clone().add(end).multiplyScalar(.5),q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),delta.clone().normalize());part(mat,middle.x,middle.y,middle.z,width,delta.length(),depth,boxGeo,q);}
@@ -66,11 +112,11 @@
     const bulbGeo=new THREE.SphereGeometry(.16,6,4),bulbMat=new THREE.MeshBasicMaterial({color:0xffe492});
     for(let i=0;i<48;i++){const a=i*Math.PI/24,bulb=new THREE.Mesh(bulbGeo,bulbMat);bulb.position.set(Math.cos(a)*wheel.radius,Math.sin(a)*wheel.radius,1.75);wheelRig.add(bulb);bulbs.push(bulb);}
     // A compact looping coaster with two rails, sleepers and a visually moving train.
-    const points=[[5,4.5,212],[6,6,226],[17,13,228],[27,8,223],[26,4.5,211],[16,3.5,209]].map(p=>new THREE.Vector3(...p));
-    const track=new THREE.CatmullRomCurve3(points,true,'centripetal'),railCurve=side=>new THREE.CatmullRomCurve3(Array.from({length:96},(_,i)=>{const t=i/96,p=track.getPointAt(t),d=track.getTangentAt(t),normal=new THREE.Vector3(d.z,0,-d.x).normalize();return p.addScaledVector(normal,side*.67);}),true,'centripetal');
+    const points=layout.trackPoints.map(p=>new THREE.Vector3(...p));
+    const track=new THREE.CatmullRomCurve3(points,true,'catmullrom',.5),railCurve=side=>new THREE.CatmullRomCurve3(Array.from({length:96},(_,i)=>{const t=i/96,p=track.getPointAt(t),d=track.getTangentAt(t),normal=new THREE.Vector3(d.z,0,-d.x).normalize();return p.addScaledVector(normal,side*.67);}),true,'centripetal');
     for(const side of [-1,1]){const rail=new THREE.Mesh(new THREE.TubeGeometry(railCurve(side),144,.12,6,true),yellow);rail.castShadow=true;group.add(rail);}
     for(let i=0;i<72;i++){const t=i/72,p=track.getPointAt(t),d=track.getTangentAt(t),n=new THREE.Vector3(d.z,0,-d.x).normalize();beam([p.x-n.x*.9,p.y-.17,p.z-n.z*.9],[p.x+n.x*.9,p.y-.17,p.z+n.z*.9],.12,teal);}
-    for(let i=0;i<14;i++){const p=track.getPointAt(i/14);beam([p.x,1.4,p.z],[p.x,p.y-.2,p.z],.26,purple);}
+    for(const [x,y,z] of layout.trackSupports)beam([x,1.4,z],[x,y-.2,z],.26,purple);
     const train=[];
     for(let i=0;i<3;i++){const car=new THREE.Group();mesh(car,i%2?teal:red,0,.48,0,1.35,.75,1.9);mesh(car,dark,0,.92,-.24,1.1,.1,1.2);mesh(car,yellow,0,1.08,.63,1.35,.1,.1);group.add(car);train.push(car);}
     for(const l of layout.lamps){part(teal,l.x,l.y+2.15,l.z,.12,4.3,.12);part(white,l.x,l.y+4.38,l.z,.75,.18,.75);part(lampMat,l.x,l.y+4.19,l.z,.55,.25,.55);}
@@ -120,7 +166,7 @@
       if(now-lastSelect>350){lastSelect=now;selected=layout.lamps.map(p=>({...p,distance:Math.hypot(p.x-position.x,p.z-position.z)})).filter(p=>p.distance<25).sort((a,b)=>a.distance-b.distance).slice(0,3);}
       lights.forEach((l,i)=>{const p=selected[i];l.intensity=p?night*12:0;if(p)l.position.set(p.x,p.y+4,p.z);});
     }
-    return{group,water,update,wheelRig,cabins,train,track,lights,instanceCount,batchCount:batches.size};
+    return{group,water,update,updateTracks,traces,wheelRig,cabins,train,track,lights,instanceCount,batchCount:batches.size};
   }
   globalThis.LowkeyCoast={create};
 })();

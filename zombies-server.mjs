@@ -38,8 +38,7 @@ export function createZombiesGame({world,players,broadcast,damagePlayer,restoreP
     if(!players.size){stop('Zombies encerrado: a sala ficou vazia.');return;}
     const humans=[...players.values()].filter(p=>p.health>0&&p.position.y>=-.3&&world.groundHeight(p.position.x,p.position.z)!==null);
     if(![...players.values()].some(p=>p.health>0)){
-      if(state.phase!=='gameover'){state.phase='gameover';state.pending=0;announce(`FIM DE JOGO · ROUND ${state.round} · ${state.kills} eliminações. Digite /zombies para jogar de novo.`);broadcast(snapshot());}
-      if(now-lastBroadcast>=100){lastBroadcast=now;broadcast({type:'zombies-motion',serverTime:now,state:meta(),zombies:[...zombies.values()].map(z=>[z.id,z.position.x,z.position.y,z.position.z,z.rotation,z.health])});}
+      stop(`ZOMBIES CONCLUÍDO · ROUND ${state.round} · ${state.kills} eliminações. A cidade voltou ao modo normal.`);
       return;
     }
     if(state.phase==='gameover')return;

@@ -12,7 +12,7 @@
       batch.items.push({x,y,z,sx,sy,sz,rotation});batches.set(key,batch);
     }
     for(const s of layout.surfaces)part(s.kind==='road'?asphalt:pavement,s.x,s.y-.075,s.z,s.hx*2,.15,s.hz*2,0,boxGeo,false);
-    for(const s of layout.entrances)part(material(0xc5b785),s.x,s.y-.05,s.z,s.hx*2,.1,s.hz*2,0,boxGeo,false);
+    for(const s of layout.entrances.filter(s=>s.kind!=='boutique'&&!s.kind?.startsWith('garage')))part(material(0xc5b785),s.x,s.y-.05,s.z,s.hx*2,.1,s.hz*2,s.rot||0,boxGeo,false);
     // Lane markings stop at intersections; zebra crossings sit beside, not over, them.
     const onOtherRoad=(x,z,r,pad=0)=>layout.roads.some(o=>o!==r&&layout.inRect(x,z,o,pad));
     for(const r of layout.roads){const vertical=r.axis==='z',half=vertical?r.hz:r.hx;
@@ -30,11 +30,31 @@
       part(white,side*32,-.018,4+i*.65,8,.014,.35,0,boxGeo,false);
       part(white,i*.8,-.018,side*36,.42,.014,8,0,boxGeo,false);
     }
-    let shopIndex=0;
     for(const b of layout.buildings){
       const c=Math.cos(b.rotation),s=Math.sin(b.rotation),wall=material(b.color),accent=material(b.accent);
       const local=(mat,x,y,z,sx,sy,sz,geo=boxGeo)=>part(mat,b.x+x*c+z*s,.12+y,b.z-x*s+z*c,sx,sy,sz,b.rotation,geo);
       const w=b.width,d=b.depth,h=b.height;
+      if(b.kind==='boutique'){
+        local(wall,-7.35,h/2,0,.3,h,d);local(wall,7.35,h/2,0,.3,h,d);local(wood,0,h/2,-6.35,w,h,.3);local(roofFlat,0,h+.1,0,w+.4,.2,d+.4);
+        local(wood,0,-.04,0,w,.08,d);
+        for(const x of [-4.4,4.4]){local(glass,x,1.7,6.35,6.2,3.2,.10);local(trim,x,.22,6.35,6.2,.44,.3);}
+        local(accent,0,3.84,6.35,w,1.1,.3);for(const x of [-1.3,1.3])local(trim,x,1.6,6.35,.10,3.2,.20);
+        for(const x of [-5.9,5.9]){local(dark,x,1.8,0,.08,.08,6);for(const z of [-2.7,2.7])local(dark,x,.9,z,.08,1.8,.08);for(let i=0;i<10;i++){const z=-2.4+i*.53,tint=i%3===0?accent:i%3===1?white:dark;local(tint,x,1.28,z,.48,.68,.13);local(tint,x,1.53,z,.74,.18,.13);}}
+        for(const x of [-2.7,2.7]){local(wood,x,.45,-.7,2.2,.9,2.6);local(trim,x,.92,-.7,2.3,.08,2.7);for(let i=0;i<3;i++)for(let k=0;k<3;k++)local(i%2?accent:white,x+(i-1)*.66,1.02+k*.065,-.7,.50,.055,.65);}
+        local(wood,4.6,.54,-4.7,3.2,1.08,1.3);local(dark,4.6,1.2,-4.7,.6,.35,.4);local(trim,-4,1.35,-6.13,2.3,2.4,.06);local(glass,-4,1.35,-6.08,2,2.1,.04);
+        for(const x of [-4,0,4])local(lamp,x,4.1,0,1.8,.07,.5);
+        if(signMaterial){for(const [text,x,y,z,width,height] of [['BOUTIQUE',0,3.97,6.53,6.8,.7],['PROVADOR',-4,2.9,-6.02,2,.35]]){const p=layout.storePoint(b,x,z);const sign=new THREE.Mesh(new THREE.PlaneGeometry(width,height),signMaterial([text],'#24383b','#f4f6da'));sign.position.set(p.x,y,p.z);sign.rotation.y=b.rotation;group.add(sign);}}
+        continue;
+      }
+      if(b.kind==='garage'){
+        local(wall,-w/2+.15,h/2,0,.30,h,d);local(wall,w/2-.15,h/2,0,.30,h,d);local(wall,0,h/2,-d/2+.15,w,h,.30);
+        local(wall,0,4.08,d/2-.15,w,.74,.30);local(roofFlat,0,h+.1,0,w+.4,.2,d+.4);
+        local(material(0x879da2),0,-.04,0,w,.08,d);local(trim,0,-.05,8,12.8,.1,3);
+        for(const x of [-3,3]){for(const side of [-1,1])local(white,x+side*1.3,.005,0,.07,.008,5);local(white,x,.005,-2.5,2.65,.008,.07);local(lamp,x,3.95,0,2,.07,.45);}
+        for(let i=0;i<14;i++){const x=-w/2+(i+.5)*w/14;local(i%2?white:accent,x,3.68,d/2+.8,w/14,.16,1.8);}
+        if(signMaterial){const sign=new THREE.Mesh(new THREE.PlaneGeometry(6.8,.55),signMaterial(['GARAGEM','CARRO E MOTO · GRÁTIS'],'#24383b','#f4f6da'));sign.position.set(b.x+(d/2+.18)*s,4.30,b.z+(d/2+.18)*c);sign.rotation.y=b.rotation;group.add(sign);}
+        continue;
+      }
       local(wall,0,h/2,0,w,h,d);local(trim,0,.16,0,w+.18,.32,d+.18);
       if(b.kind==='tower'){
         for(let floor=0;floor<b.floors;floor++){
@@ -58,7 +78,7 @@
         for(let i=0;i<14;i++){const x=-w/2+(i+.5)*w/14;local(i%2?white:accent,x,3.35,d/2+.8,w/14,.16,1.8);local(i%2?white:accent,x,3.1,d/2+1.6,w/14,.42,.13);}
         local(roofFlat,0,h+.1,0,w+.4,.2,d+.4);
         for(const side of [-1,1]){local(accent,side*(w/2+.13),h+.36,0,.26,.55,d+.4);local(accent,0,h+.36,side*(d/2+.13),w+.4,.55,.26);}
-        if(signMaterial){const names=['CAFÉ LOWKEY','MERCADO','GARAGEM','BOUTIQUE'];const sign=new THREE.Mesh(new THREE.PlaneGeometry(6.8,.85),signMaterial([names[shopIndex++%names.length],'PRAÇA CENTRAL'],'#24383b','#f4f6da'));sign.position.set(b.x+(d/2+.10)*s,4.02,b.z+(d/2+.10)*c);sign.rotation.y=b.rotation;group.add(sign);}
+        if(signMaterial){const sign=new THREE.Mesh(new THREE.PlaneGeometry(6.8,.85),signMaterial([b.shopName,'PRAÇA CENTRAL'],'#24383b','#f4f6da'));sign.position.set(b.x+(d/2+.10)*s,4.02,b.z+(d/2+.10)*c);sign.rotation.y=b.rotation;group.add(sign);}
         for(const side of [-1,1])local(glass,side*(w/2+.04),2,0,.08,2.2,6);
         local(pavement,2,h+.5,-1,2.3,.8,1.6);
       }else{
