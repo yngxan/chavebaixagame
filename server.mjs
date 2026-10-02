@@ -1009,7 +1009,42 @@ const server = createServer(async (request, response) => {
         return response.end();
       }
       if (!['punch', 'snowball'].includes(action)) return json(response, 400, { error: 'Ação inválida.' });
-      const now = Date.now(), cooldown = action === 'punch' ? 560 : 420;
+      if(action==='punch'){
+        const now=Date.now();
+        client.punchClicks=(client.punchClicks||[]).filter(at=>now-at<1000);
+        client.punchIds||=new Map();for(const [key,at] of client.punchIds)if(now-at>5000)client.punchIds.delete(key);
+        const swingId=data.swingId;
+        if(swingId!==undefined&&(!Number.isSafeInteger(swingId)||swingId<0))return json(response,400,{error:'Soco inválido.'});
+        if(swingId!==undefined&&client.punchIds.has(swingId))return json(response,200,{ok:true,duplicate:true});
+        if(client.punchClicks.length>=30)return json(response,429,{error:'Muitos ataques por segundo.'});
+        client.punchClicks.push(now);if(swingId!==undefined)client.punchIds.set(swingId,now);
+        const facing=Math.atan2(Math.sin(finite(data.facing,player.rotation)),Math.cos(finite(data.facing,player.rotation)));
+        const pitch=Math.max(-Math.PI/2+.04,Math.min(Math.PI/2-.04,finite(data.pitch)));
+        const aim={x:Math.sin(facing)*Math.cos(pitch),y:-Math.sin(pitch),z:Math.cos(facing)*Math.cos(pitch)};
+        const origin={x:player.position.x,y:player.position.y+1.42,z:player.position.z},reach=2.7;
+        const end={x:origin.x+aim.x*reach,y:origin.y+aim.y*reach,z:origin.z+aim.z*reach};
+        let target=null,nearest=Infinity;
+        for(const candidate of players.values()){
+          if(candidate.id===id||candidate.health<=0||candidate.vehicleId)continue;
+          const hit=playerSegmentHit(origin,end,candidate.position,.36);
+          if(hit!==null&&hit<nearest){target=candidate;nearest=hit;}
+        }
+        player.rotation=facing;
+        broadcast({type:'combat-start',id,kind:'punch',facing,pitch,firstPerson:data.firstPerson===true,swingId,time:now});
+        let impulse=null,damage=0;
+        if(target){
+          const dx=target.position.x-player.position.x,dz=target.position.z-player.position.z,length=Math.hypot(dx,dz);
+          const force=player.speed>6.8?6.5:4.8;
+          impulse={x:(length>.001?dx/length:aim.x)*force,y:3.2,z:(length>.001?dz/length:aim.z)*force};
+          damage=4;target.health=Math.max(0,target.health-damage);
+          const victim=clients.get(target.id),deadUntil=target.health<=0?now+2200:0;
+          if(victim){victim.movementCredits=Math.min(7,(victim.movementCredits||0)+2.5);if(deadUntil)victim.deadUntil=deadUntil;send(victim.response,{type:'weapon-health',targetId:target.id,health:target.health,deadUntil});}
+          if(deadUntil)impulse=null;
+        }
+        broadcast({type:'combat-punch',id,swingId,targetId:target?.id||null,damage,health:target?.health,impulse,time:now});
+        return json(response,200,{ok:true,swingId,hit:Boolean(target)});
+      }
+      const now = Date.now(), cooldown = 420;
       if (now - client.lastCombatAt < cooldown) return json(response, 429, { error: 'Espera um instante antes de atacar de novo.' });
       client.lastCombatAt = now;
       const combatToken=randomUUID();client.combatToken=combatToken;
@@ -1035,19 +1070,6 @@ const server = createServer(async (request, response) => {
       setTimeout(() => {
       if(clients.get(id)!==client||players.get(id)!==player||client.combatToken!==combatToken)return;
       const releasedAt=Date.now();
-      if (action === 'punch') {
-        const origin = { x: player.position.x, y: player.position.y + 1.42, z: player.position.z }, reach = 1.7;
-        const end={x:origin.x+aim.x*reach,y:origin.y+aim.y*reach,z:origin.z+aim.z*reach};
-        let target = null, nearest = Infinity;
-        for (const candidate of players.values()) {
-          if (candidate.id === id) continue;
-          const hit=playerSegmentHit(origin,end,candidate.position,.36);
-          if(hit===null||hit>=nearest)continue;
-          target = candidate; nearest = hit;
-        }
-        const dx = target ? target.position.x - player.position.x : aim.x, dz = target ? target.position.z - player.position.z : aim.z, length = Math.hypot(dx, dz) || 1;
-        broadcast({ type: 'combat-punch', id, targetId: target?.id || null, impulse: target ? { x: dx / length * 2.4, z: dz / length * 2.4 } : null, time: releasedAt });
-      } else {
         const position = firstPerson
           ? { x: handOrigin.x + aim.x * .12, y: handOrigin.y + aim.y * .12, z: handOrigin.z + aim.z * .12 }
           : { x: player.position.x - Math.cos(yaw) * .34 + aim.x * .55, y: player.position.y + .94 + aim.y * .22, z: player.position.z - Math.sin(yaw) * .34 + aim.z * .55 };
@@ -1055,8 +1077,7 @@ const server = createServer(async (request, response) => {
         const projectile = { id: randomUUID(), ownerId: id, kind: action, position, velocity, lastAt: releasedAt, createdAt: releasedAt };
         projectiles.set(projectile.id, projectile);
         broadcast({ type: 'combat-throw', projectile: { id: projectile.id, ownerId: id, kind: action, position: projectile.position, velocity: projectile.velocity, time: releasedAt } });
-      }
-      },action==='punch'?218:65).unref();
+      },65).unref();
       return json(response, 200, { ok: true });
     } catch (error) { return json(response, error.statusCode || 400, { error: error.message || 'Não consegui completar a ação.' }); }
   }
