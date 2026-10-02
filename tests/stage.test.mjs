@@ -43,6 +43,7 @@ test('only existing owner account controls shared video; join snapshot includes 
  const fixture=await mkdtemp(join(tmpdir(),'lowkey-stage-test-'));
  const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');const port=reservation.address().port;await new Promise(done=>reservation.close(done));
  await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));await mkdir(join(fixture,'data'));
+  await copyFile(new URL('../city-layout.js',import.meta.url),join(fixture,'city-layout.js'));
   await copyFile(new URL('../world-systems.js',import.meta.url),join(fixture,'world-systems.js'));
   for(const file of ['zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
  const hash=token=>createHash('sha256').update(token).digest('hex');

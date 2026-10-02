@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {createZombiesGame} from '../zombies-server.mjs';
+import '../city-layout.js';
 import '../world-systems.js';
 
 function fixture(){let now=10000,seed=812;const events=[],players=new Map([['p',{id:'p',health:100,position:{x:0,y:.18,z:5}}]]);let restored=0,hits=0;
@@ -28,7 +29,7 @@ test('server attacks obey emergence, walls, attack cooldown and game-over cleanu
 });
 test('client renders emergence, compact movement, hits and reconnect snapshots without leaking enemies',async()=>{
   let now=0;const hud={hidden:true,textContent:''},sandbox=vm.createContext({performance:{now:()=>now},console});
-  for(const file of ['three.min.js','motion-sync.js','zombies-client.js'])vm.runInContext(await readFile(new URL('../'+file,import.meta.url),'utf8'),sandbox);
+  for(const file of ['three.min.js','city-layout.js','motion-sync.js','zombies-client.js'])vm.runInContext(await readFile(new URL('../'+file,import.meta.url),'utf8'),sandbox);
   const scene=new sandbox.THREE.Scene(),client=sandbox.LowkeyZombies.create({THREE:sandbox.THREE,scene,hud}),z={id:'zombie-1',position:{x:2,y:.18,z:3},rotation:0,spawnAt:10000,health:52,speed:1.5,appearance:{skin:'#71875d',hair:'#16151b',hairStyle:'braids',shirt:'#623c48',pants:'#282a32'}};
   client.receive({type:'zombies-state',serverTime:10000,state:{active:true,round:1,remaining:8},zombies:[z]},now);client.update(.016,now);assert.ok(client.models.get(z.id).group.position.y<-2);assert.equal(hud.hidden,false);
   now=1700;client.update(.04,now);assert.equal(client.models.get(z.id).group.position.y,.18);client.receive({type:'zombies-motion',serverTime:11700,state:{active:true,round:1,remaining:8},zombies:[[z.id,2.1,.18,3.1,.2,18]]},now);client.update(.04,now);

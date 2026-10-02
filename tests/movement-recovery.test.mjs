@@ -8,11 +8,11 @@ import {createServer} from 'node:net';
 import {once} from 'node:events';
 import {setTimeout as delay} from 'node:timers/promises';
 
-test('delayed movement, rapid falling and return to the actual reconnect spawn do not kick a player',{timeout:15000},async()=>{
+test('delayed movement, city travel, rapid falling and return to the actual reconnect spawn do not kick a player',{timeout:25000},async()=>{
   const fixture=await mkdtemp(join(tmpdir(),'lowkey-recovery-test-'));
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
-  for(const file of ['server.mjs','world-systems.js','zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+  for(const file of ['server.mjs','city-layout.js','world-systems.js','zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   let logs='',ready=false;child.stderr.on('data',chunk=>logs+=chunk);child.stdout.on('data',chunk=>{if(String(chunk).includes('multiplayer pronta'))ready=true;});
   const base=`http://127.0.0.1:${port}`,streams=[];
@@ -41,6 +41,13 @@ test('delayed movement, rapid falling and return to the actual reconnect spawn d
     assert.equal((await state(position)).status,204);
     await delay(50);assert.equal(player.events.some(event=>event.type==='movement-correction'),false,'valid fall and respawn do not cause corrections');
     assert.equal(logs.includes('[anti-cheat]'),false);
+    // Legal movement crosses the former 65-unit validation limit.
+    position.y=.12;
+    while(position.x<72){await delay(350);position.x=Math.min(72,position.x+4);assert.equal((await state({...position})).status,204);}
+    await delay(50);assert.equal(player.events.some(event=>event.type==='movement-correction'),false,'new city bounds do not pull a valid player back');
+    player.abort.abort();await delay(80);player=await connect(cookie);sequence=0;
+    assert.equal(player.hello.spawn.x,72,'city positions survive reconnect');
+    Object.assign(position,player.hello.spawn);
     for(let i=0;i<6;i++)assert.equal((await state({x:64,y:18,z:64})).status,204,'one burst of bad queued packets does not instantly kick');
     await waitFor(()=>player.events.some(event=>event.type==='movement-correction'));
     const correction=player.events.filter(event=>event.type==='movement-correction').at(-1);

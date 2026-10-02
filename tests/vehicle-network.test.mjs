@@ -7,13 +7,14 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
+import '../city-layout.js';
 import '../world-systems.js';
 
 test('vehicles are shared, proximity-checked, server-driven and freed on disconnect', {timeout:45000}, async()=>{
   const fixture=await mkdtemp(join(tmpdir(),'lowkey-vehicle-test-'));
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
-  for(const file of ['server.mjs','world-systems.js','zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+  for(const file of ['server.mjs','city-layout.js','world-systems.js','zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   const base=`http://127.0.0.1:${port}`,streams=[];let logs='';child.stderr.on('data',chunk=>logs+=chunk);
   const post=(cookie,path,data)=>fetch(base+path,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify(data)});

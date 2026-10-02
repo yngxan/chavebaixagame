@@ -5,6 +5,7 @@ import { dirname, extname, join } from 'node:path';
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import './city-layout.js';
 import './world-systems.js';
 import {createZombiesGame} from './zombies-server.mjs';
 import {createGameGuard} from './game-security.mjs';
@@ -124,6 +125,9 @@ const allowedFiles = new Map([
   ['/stage-media.js', 'stage-media.js'],
   ['/motion-sync.js', 'motion-sync.js'],
   ['/world-systems.js', 'world-systems.js'],
+  ['/city-layout.js', 'city-layout.js'],
+  ['/city-client.js', 'city-client.js'],
+  ['/coast-client.js', 'coast-client.js'],
   ['/vehicles-client.js', 'vehicles-client.js'],
   ['/zombies-client.js', 'zombies-client.js'],
   ['/environment.js', 'environment.js'],
@@ -652,7 +656,7 @@ const server = createServer(async (request, response) => {
         if(now-client.lastStateAt<24){response.writeHead(204);return response.end();}
         if(Number.isSafeInteger(sequence)&&sequence>=0)client.lastStateSequence=sequence;client.lastStateAt=now;
         const position=data.position||{};if(![position.x,position.y,position.z].every(Number.isFinite))return noteMovementViolation(client,response,'posição de espectador inválida');
-        const next={x:position.x,y:position.y,z:position.z};if(Math.abs(next.x)>49||Math.abs(next.z)>49||next.y<-1||next.y>38)return noteMovementViolation(client,response,'limite do voo espectador');
+        const next={x:position.x,y:position.y,z:position.z};if(next.x<LowkeyCityLayout.bounds.minX+1||next.x>LowkeyCityLayout.bounds.maxX-1||next.z<LowkeyCityLayout.bounds.minZ+1||next.z>LowkeyCityLayout.bounds.maxZ-1||next.y<-1||next.y>38)return noteMovementViolation(client,response,'limite do voo espectador');
         const elapsed=Math.min(.6,Math.max(.024,(now-client.motionAt)/1000)),distance3d=Math.hypot(next.x-player.position.x,next.y-player.position.y,next.z-player.position.z);
         if(distance3d>10*elapsed+1.25)return noteMovementViolation(client,response,'velocidade do voo espectador');
         const floor=LowkeyWorld.groundHeight(next.x,next.z);if(floor!==null)next.y=Math.max(next.y,floor+.42);
@@ -687,7 +691,7 @@ const server = createServer(async (request, response) => {
       const position = data.position || {};
       if (![position.x, position.y, position.z].every(value => typeof value === 'number' && Number.isFinite(value))) return noteMovementViolation(client, response, 'posição inválida');
       const nextPosition = { x: position.x, y: position.y, z: position.z };
-      if (Math.abs(nextPosition.x) > 65 || Math.abs(nextPosition.z) > 65 || nextPosition.y < -52 || nextPosition.y > 22) return noteMovementViolation(client, response, 'limite do mapa');
+      if (nextPosition.x < LowkeyCityLayout.bounds.minX-15 || nextPosition.x > LowkeyCityLayout.bounds.maxX+15 || nextPosition.z < LowkeyCityLayout.bounds.minZ-15 || nextPosition.z > LowkeyCityLayout.bounds.maxZ+15 || nextPosition.y < -52 || nextPosition.y > 22) return noteMovementViolation(client, response, 'limite do mapa');
       const elapsed = Math.min(1.5, Math.max(.04, (now - client.motionAt) / 1000));
       const dx = nextPosition.x - player.position.x, dy = nextPosition.y - player.position.y, dz = nextPosition.z - player.position.z;
       const horizontalDistance = Math.hypot(dx, dz), verticalDistance = Math.abs(dy);
@@ -718,7 +722,7 @@ const server = createServer(async (request, response) => {
       player.rotation = Math.atan2(Math.sin(rotation), Math.cos(rotation));
       player.speed = Math.min(14, horizontalDistance / Math.max(.015, captureDelta / 1000));
       player.walking = horizontalDistance > .025;
-      player.jumping = data.jumping === true;
+      player.swimming = LowkeyWorld.isSwimming(nextPosition,now);player.jumping = !player.swimming && data.jumping === true;
       player.voiceEnabled = hasSfuConfig() ? Boolean(client.voiceReady && client.voicePublishSessionId) : Boolean(data.voiceEnabled);
       player.glockEquipped = Boolean(data.glockEquipped);
       player.glockPitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.glockPitch)));
@@ -1133,7 +1137,7 @@ const server = createServer(async (request, response) => {
         const range = 70, end = { x: origin.x + direction.x * range, y: origin.y + direction.y * range, z: origin.z + direction.z * range };
         let target = null, nearest = zombiesGame.active?(LowkeyWorld.shotBlock(origin,end,[...vehicles.values()])??Infinity):Infinity;
         for (const candidate of combatTargets(id)) {
-          if (candidate.id === id || candidate.health <= 0 || candidate.position.y < -.2) continue;
+          if (candidate.id === id || candidate.health <= 0 || (candidate.position.y < -.2 && !candidate.swimming)) continue;
           const hit = playerSegmentHit(origin, end, candidate.position, .34);
           if (hit !== null && hit < nearest) { target = candidate; nearest = hit; }
         }
@@ -1355,7 +1359,7 @@ setInterval(() => {
     projectile.velocity.y -= 9.8 * dt;
     let hit = null, bestDistance = LowkeyWorld.shotBlock(from,to,[...vehicles.values()])??Infinity;
     for (const target of combatTargets(projectile.ownerId)) {
-      if (target.id === projectile.ownerId || target.position.y < -.2) continue;
+      if (target.id === projectile.ownerId || (target.position.y < -.2 && !target.swimming)) continue;
       const t=playerSegmentHit(from,to,target.position,.43);
       if(t!==null&&t<bestDistance){hit=target;bestDistance=t;}
     }

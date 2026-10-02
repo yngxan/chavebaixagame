@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const context = vm.createContext({});
+vm.runInContext(await readFile(new URL('../city-layout.js', import.meta.url), 'utf8'), context);
 vm.runInContext(await readFile(new URL('../motion-sync.js', import.meta.url), 'utf8'), context);
 const { MotionBuffer, plazaSurfaces, supportHeight } = context.LowkeyMotion;
 
@@ -13,7 +14,8 @@ test('feet and shadows follow the actual overlapping plaza slabs, grass and isla
   assert.equal(supportHeight(plazaSurfaces, 0, 13), .1);
   assert.equal(supportHeight(plazaSurfaces, 7, 20), .045);
   assert.equal(supportHeight(plazaSurfaces, 20, 20), -.05);
-  assert.equal(supportHeight(plazaSurfaces, 51, 0), null);
+  assert.equal(supportHeight(plazaSurfaces, 121, 0), -.05);
+  assert.equal(supportHeight(plazaSurfaces, 135, 0), null);
   const surfaces = [...plazaSurfaces, {x:0, z:-11.7, hx:6.7, hz:3.35, y:1.15}];
   assert.equal(supportHeight(surfaces, 0, -11.7, .2), .1, 'do not snap a player below the stage onto its roof');
   assert.equal(supportHeight(surfaces, 0, -11.7, 1.2), 1.15);
@@ -79,7 +81,7 @@ test('actual landing and stepping code settles on the plaza, descends onto grass
   sandbox.avatar.position.x=20;sandbox.avatar.position.z=20;
   for(let i=0;i<30;i++)step();
   assert.equal(sandbox.avatar.position.y,-.05);assert.equal(sandbox.onGround,true);
-  sandbox.avatar.position.x=51;
+  sandbox.avatar.position.x=135;
   for(let i=0;i<30;i++)step();
   assert.ok(sandbox.avatar.position.y<-1);assert.equal(sandbox.onGround,false);
 });

@@ -4,6 +4,26 @@ Primeira sala compartilhada do protótipo social LowKey. O servidor usa Node.js;
 
 ## Abrir a sala
 
+## Cidade ao redor da praça
+
+A praça original e seu palco continuam no centro. A primeira expansão tem ruas de mão dupla, faixas de pedestre, calçadas, 60 construções (prédios, lojas e casas), árvores e postes que acendem no ciclo noturno. As construções são fachadas externas por enquanto, sem interiores. Carros, motos e jogadores usam as mesmas colisões e alturas no cliente e no servidor; o terreno agora vai de -120 a +120 nos dois eixos.
+
+### Ilha, praia e píer
+
+O mar cerca a cidade, com areia nas bordas e uma praia maior ao sul. Uma rampa leva ao píer elevado, com quiosques, roda-gigante e uma pequena montanha-russa animada. Os brinquedos são cenográficos nesta etapa; ainda não há embarque. Postes e luzes do parque acendem à noite. O mundo navegável vai de -210 a +210 em X e de -210 a +340 em Z.
+
+A água tem ondas geométricas, reflexo estilizado do céu, brilho e espuma junto à costa. A flutuação usa a mesma função e o mesmo relógio das ondas. Entrar na água ativa natação e movimentos de braços/pernas, também sincronizados entre jogadores; voltar à areia termina a natação. Não existe chão invisível no mar, carros continuam limitados ao terreno, e não é possível subir através do deck vindo de baixo do píer.
+
+O biotipo feminino tem volume discreto de peito e quadris/glúteos sob a roupa, tanto no avatar local quanto nos outros jogadores. O biotipo masculino permanece inalterado.
+
+Prévia da praia: `http://localhost:4197/?preview=beach` (inicie a prévia isolada com `LOWKEY_PREVIEW_PORT=4197`). Para conferir o parque à noite, acrescente `&lighting=night`. Estas mudanças ainda precisam ser publicadas para aparecer na versão online.
+
+`city-layout.js` define o mapa compartilhado; `city-client.js` monta os detalhes em lotes de instâncias e limita as luzes urbanas reais aos seis postes próximos. Não há tráfego automático nem jogadores artificiais.
+
+Prévia local isolada: rode `node tests/preview-startup.mjs` e abra `http://localhost:4196/?preview=city` para a vista aérea. A vista aérea só existe no localhost e não entra na sala. Use `http://localhost:4196/` para testar o jogo; as contas dessa prévia são descartáveis e não são as contas online.
+
+### Iniciar o servidor
+
 1. Extraia o ZIP inteiro para uma pasta.
 2. Instale Node.js 20 ou mais recente no computador que vai hospedar a sala.
 3. Abra `INICIAR-SALA.bat` e aceite acesso à rede privada se o Windows perguntar.

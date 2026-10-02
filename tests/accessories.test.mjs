@@ -13,6 +13,7 @@ test('accessories persist across login and reach another player with legacy defa
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
   await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));
+  await copyFile(new URL('../city-layout.js',import.meta.url),join(fixture,'city-layout.js'));
   await copyFile(new URL('../world-systems.js',import.meta.url),join(fixture,'world-systems.js'));
   for(const file of ['zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
@@ -38,7 +39,7 @@ test('accessories persist across login and reach another player with legacy defa
     assert.equal(restored.hairStyle,'fade');assert.equal(restored.headwear,'nyCap');assert.equal(restored.hood,false);assert.equal(restored.shoeStyle,'jordan');assert.equal(restored.shoeAccent,'#24aaff');
     const other=await post('','/api/auth/register',{username:'style_observer',password});assert.equal(other.status,201);
     const observer=await connect(other.headers.get('set-cookie').split(';')[0]),owner=await connect(cookie);
-    const state=await post(cookie,'/api/state',{id:owner.hello.id,sequence:1,appearance:restored,position:{x:0,y:0,z:0}});assert.equal(state.status,204);
+    const state=await post(cookie,'/api/state',{id:owner.hello.id,sequence:1,appearance:restored,position:owner.hello.spawn});assert.equal(state.status,204);
     const remote=await waitFor(()=>observer.events.find(event=>event.type==='state'&&event.player.id===owner.hello.id));
     assert.deepEqual(remote.player.appearance,restored);
     for(const hairStyle of ['lowBlack','braids']){
@@ -47,7 +48,7 @@ test('accessories persist across login and reach another player with legacy defa
       const relogged=(await (await post('','/api/auth/login',{username:'style_test',password})).json()).user.profile.appearance;
       assert.equal(relogged.hairStyle,hairStyle);
       await delay(50);
-      assert.equal((await post(cookie,'/api/state',{id:owner.hello.id,sequence:hairStyle==='lowBlack'?2:3,appearance:relogged})).status,204);
+      assert.equal((await post(cookie,'/api/state',{id:owner.hello.id,sequence:hairStyle==='lowBlack'?2:3,appearance:relogged,position:owner.hello.spawn})).status,204);
       const haircut=await waitFor(()=>observer.events.find(event=>event.type==='state'&&event.player.id===owner.hello.id&&event.player.appearance.hairStyle===hairStyle));
       assert.equal(haircut.player.appearance.headwear,'none');
     }

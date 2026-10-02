@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 let now=0;
 const label={textContent:''},sandbox=vm.createContext({console:{warn(){},log(){}},performance:{now:()=>now},document:{querySelector:()=>label}});
-for(const file of ['three.min.js','world-systems.js','motion-sync.js','environment.js','vehicles-client.js'])vm.runInContext(await readFile(new URL('../'+file,import.meta.url),'utf8'),sandbox);
+for(const file of ['three.min.js','city-layout.js','world-systems.js','motion-sync.js','environment.js','vehicles-client.js'])vm.runInContext(await readFile(new URL('../'+file,import.meta.url),'utf8'),sandbox);
 const THREE=sandbox.THREE;
 
 test('hijack opens the door, animates both characters into their final positions and resets on cancellation',()=>{

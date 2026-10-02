@@ -3,7 +3,10 @@
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
   const turn = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
   const plazaSurfaces = [
-    { x: 0, z: 0, hx: 50, hz: 50, y: -.05, ground: true },
+    { x: 0, z: 0, hx: LowkeyCityLayout.MAP_HALF_SIZE, hz: LowkeyCityLayout.MAP_HALF_SIZE, y: -.05, ground: true },
+    ...LowkeyCityLayout.surfaces,
+    ...LowkeyCityLayout.entrances,
+    ...LowkeyCityLayout.coast.surfaces,
     { x: 0, z: 0, hx: 8, hz: 24, y: .045, ground: true },
     { x: 0, z: 0, hx: 6.5, hz: 14, y: .1, ground: true },
     { x: 0, z: 0, hx: 13, hz: 9, y: .1, ground: true },
@@ -29,7 +32,7 @@
       const previous = this.samples.at(-1);
       if (previous && (state.motionReset || 0) === previous.motionReset && time <= previous.time) return false;
       const sample = { time, arrival, x: state.x, y: state.y, z: state.z, rotation: state.rotation || 0,
-        pitch: state.pitch || 0, motionReset: state.motionReset || 0, walking: Boolean(state.walking), jumping: Boolean(state.jumping), speed: state.speed || 0 };
+        pitch: state.pitch || 0, motionReset: state.motionReset || 0, walking: Boolean(state.walking), jumping: Boolean(state.jumping), swimming: Boolean(state.swimming), speed: state.speed || 0 };
       const distance = previous ? Math.hypot(sample.x - previous.x, sample.y - previous.y, sample.z - previous.z) : 0;
       // Only spawn, respawn and genuine map teleports reset the rendered position.
       const reset = !previous || sample.motionReset !== previous.motionReset || time - previous.time > 2000 || distance > 12;
@@ -60,6 +63,7 @@
         target.rotation = turn(a.rotation, b.rotation, t);
         target.walking = t < .5 ? a.walking : b.walking;
         target.jumping = t < .5 ? a.jumping : b.jumping;
+        target.swimming = t < .5 ? a.swimming : b.swimming;
       } else if (time > b.time) {
         Object.assign(target, b);
         if (b !== a && b.walking) {
@@ -76,9 +80,16 @@
       const blend = 1 - Math.exp(-32 * dt), output = this.output;
       for (const axis of ['x', 'y', 'z', 'pitch', 'speed']) output[axis] += (target[axis] - output[axis]) * blend;
       output.rotation = turn(output.rotation, target.rotation, blend);
-      output.walking = target.walking; output.jumping = target.jumping;
+      output.walking = target.walking; output.jumping = target.jumping; output.swimming = target.swimming;
       return output;
     }
   }
-  globalThis.LowkeyMotion = { MotionBuffer, plazaSurfaces, contains, supportHeight };
+  function applySwimPose(arms,legs,body,head,time,speed,armed=false){
+    const moving=speed>.15,phase=time*(moving?4.6:2.2),stroke=Math.sin(phase),kick=Math.sin(phase*1.8);
+    body.rotation.set(moving?.14:0,0,0);body.scale.set(1,1,1);
+    head.rotation.x=body.rotation.x;head.rotation.z=0;head.position.y=-.15;head.position.z=-.15*Math.sin(body.rotation.x);
+    for(let i=0;i<legs.length;i++)legs[i].rotation.set((moving?.12:.05)+(i?1:-1)*kick*(moving?.28:.12),0,(i?1:-1)*.06);
+    if(!armed)for(let i=0;i<arms.length;i++){const side=arms[i].userData.side??(i?1:-1);arms[i].rotation.set(-.75+(i?1:-1)*stroke*(moving?.6:.22),0,side*.60);const forearm=arms[i].userData.forearm;if(forearm)forearm.rotation.set(-.55,0,0);}
+  }
+  globalThis.LowkeyMotion = { MotionBuffer, plazaSurfaces, contains, supportHeight, applySwimPose };
 })();

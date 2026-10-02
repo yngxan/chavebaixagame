@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import '../city-layout.js';
 import '../world-systems.js';
 const world=globalThis.LowkeyWorld;
 
@@ -72,9 +73,9 @@ test('both vehicles accelerate, steer, brake, reverse and obey boundaries withou
     vehicle.x=0;vehicle.z=0;vehicle.rotation=0;vehicle.speed=20;
     world.advanceVehicle(vehicle,{throttle:1},.05,[{x:0,z:1.3,hx:2,hz:.2}]);
     assert.equal(vehicle.speed,0);assert.ok(vehicle.z<1.1,'substeps stop before prop');
-    vehicle.x=48;vehicle.z=20;vehicle.rotation=Math.PI/2;vehicle.speed=27;
+    vehicle.x=132;vehicle.z=20;vehicle.rotation=Math.PI/2;vehicle.speed=27;
     for(let i=0;i<30;i++)world.advanceVehicle(vehicle,{throttle:1},1/60,[]);
-    assert.ok(vehicle.x<=49);assert.equal(vehicle.speed,0);
+    assert.ok(vehicle.x<=134);assert.equal(vehicle.speed,0);assert.notEqual(world.groundHeight(vehicle.x,vehicle.z),null);
   }
 });
 
@@ -121,5 +122,5 @@ test('road and plaza have no duplicate coplanar upper slabs',async()=>{
   const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
   assert.ok(!html.includes('box(scene,0,.06,0,13,.08,28,mats.stone2)'));
   assert.ok(html.includes('for(const z of [-11.5,11.5])'));
-  for(const scriptName of ['world-systems.js','environment.js','vehicles-client.js'])new vm.Script(await readFile(new URL('../'+scriptName,import.meta.url),'utf8'));
+  for(const scriptName of ['city-layout.js','world-systems.js','environment.js','vehicles-client.js'])new vm.Script(await readFile(new URL('../'+scriptName,import.meta.url),'utf8'));
 });

@@ -1,21 +1,43 @@
 (() => {
   const SEGMENT_MS = 15 * 60 * 1000, TRANSITION_MS = 10000, HIJACK_MS=1800;
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  const city=LowkeyCityLayout,MAP_HALF_SIZE=city.MAP_HALF_SIZE;
   function daylight(now) {
     const phase = Math.floor(now / SEGMENT_MS) % 2, elapsed = now % SEGMENT_MS;
     const t = clamp(elapsed / TRANSITION_MS, 0, 1), blend = t * t * (3 - 2 * t);
     return phase ? 1 - blend : blend;
   }
   function groundHeight(x, z) {
-    if (Math.abs(x) > 50 || Math.abs(z) > 50) return null;
-    let height = -.05;
+    const kind=city.groundKind(x,z);if(kind===null)return null;
+    let height = kind==='road'?-.025:kind==='sidewalk'?.12:-.05;
+    if(Math.abs(x)>MAP_HALF_SIZE||Math.abs(z)>MAP_HALF_SIZE){height=-Infinity;for(const surface of city.coast.surfaces)if(city.inRect(x,z,surface))height=Math.max(height,surface.y);return height===-Infinity?null:height;}
+    // At shared edges the higher adjacent surface supports feet on both peers.
+    for(const surface of city.surfaces)if(city.inRect(x,z,surface))height=Math.max(height,surface.y);
+    for(const surface of city.coast.surfaces)if(city.inRect(x,z,surface))height=Math.max(height,surface.y);
+    for(const p of city.entrances)if(city.inRect(x,z,p))height=Math.max(height,p.y);
     if (Math.abs(x) <= 8 && Math.abs(z) <= 24) height = .045;
     if ((Math.abs(x) <= 6.5 && Math.abs(z) <= 14) || (Math.abs(x) <= 13 && Math.abs(z) <= 9)) height = .1;
     if (Math.abs(x) <= 11 && Math.abs(z) <= 7) height = .18;
     return height;
   }
+  // Same wave function in physics and the water shader, synchronized to room time.
+  function waterHeight(x,z,serverTime){const t=(serverTime/1000)%10000;return city.coast.waterY+Math.sin(x*.095+z*.055-t*.85)*.17+Math.sin(x*-.06+z*.14-t*1.15)*.075;}
+  function waterAt(position){const {x,y,z}=position,b=city.bounds;if(x<b.minX||x>b.maxX||z<b.minZ||z>b.maxZ)return false;const kind=city.groundKind(x,z);return kind===null||kind==='pier'&&y<1.1;}
+  function isSwimming(position,serverTime){return waterAt(position)&&position.y<=waterHeight(position.x,position.z,serverTime)+.12;}
+  function advanceSwimmer(position,dx,dz,dt,serverTime,move=null){
+    const previous={...position};if(move)move(position,dx,dz);else{position.x+=dx;position.z+=dz;}
+    const b=city.bounds;position.x=clamp(position.x,b.minX+1.5,b.maxX-1.5);position.z=clamp(position.z,b.minZ+1.5,b.maxZ-1.5);
+    const floor=groundHeight(position.x,position.z);
+    if(!waterAt(position)){
+      if(floor!==null&&floor<=.2){position.y=floor;return false;}
+      // You cannot climb from underneath the pier straight through its deck.
+      position.x=previous.x;position.z=previous.z;
+    }
+    const surface=waterHeight(position.x,position.z,serverTime),target=surface-1.27;
+    position.y+=(target-position.y)*(1-Math.exp(-5*dt));return true;
+  }
   const drivingObstacles = [{x:0,z:-11.7,hx:7.1,hz:4.1}];
-  for (const [x,z,size] of [[-18,-19,1.5],[-9,-25,1.25],[10,-25,1.35],[21,-18,1.55],[-24,-7,1.4],[24,-3,1.3],[-22,12,1.35],[22,15,1.45],[-13,24,1.45],[1,27,1.3],[14,23,1.55],[-29,4,1.3],[30,9,1.3]]) drivingObstacles.push({x,z,r:.58*size});
+  for (const [x,z,size] of [[-18,-19,1.5],[-9,-25,1.25],[10,-25,1.35],[21,-18,1.55],[-24,-7,1.4],[24,-3,1.3],[-22,12,1.35],[22,15,1.45],[-13,24,1.45],[1,27,1.3],[14,23,1.55],[-23,4,1.3],[23,9,1.3]]) drivingObstacles.push({x,z,r:.58*size});
   for (const [x,z,rot] of [[-6,2,Math.PI/2],[6,2,-Math.PI/2],[-5,-4,Math.PI/4],[5,-4,-Math.PI/4]]) drivingObstacles.push({x,z,hx:1.3,hz:.48,rot});
   for (const [x,z] of [[-10,-4],[10,-4],[-10,8],[10,8]]) drivingObstacles.push({x,z,r:.13});
   const combatObstacles=[{x:0,z:-11.7,hx:6.7,hz:3.35,minY:0,maxY:1.15}];
@@ -25,8 +47,17 @@
     if(obstacle.r!==undefined)combatObstacles.push({...obstacle,hx:obstacle.r*.71,hz:obstacle.r*.71,minY:0,maxY:obstacle.r>.2?3.1*obstacle.r/.58:3.44});
     else{combatObstacles.push({...obstacle,hx:1.25,hz:.09,offsetZ:-.27,minY:.61,maxY:1.51});standingPlatforms.push({...obstacle,hx:1.25,hz:.36,y:.66});}
   }
+  drivingObstacles.push(...city.obstacles);
+  combatObstacles.push(...city.obstacles.map(o=>o.r===undefined?o:{...o,hx:o.r,hz:o.r}));
   function supportHeight(x,z){let height=groundHeight(x,z);if(height===null)return null;for(const p of standingPlatforms){const c=Math.cos(p.rot||0),s=Math.sin(p.rot||0),dx=x-p.x,dz=z-p.z;if(Math.abs(dx*c-dz*s)<=p.hx+.1&&Math.abs(dx*s+dz*c)<=p.hz+.1)height=Math.max(height,p.y);}return height;}
   function keepCameraAboveGround(position,clearance=.32){const floor=supportHeight(position.x,position.z)??-.05;if(position.y<floor+clearance)position.y=floor+clearance;return position;}
+  function constrainCamera(target,position,clearance=.25){
+    const length=Math.hypot(position.x-target.x,position.y-target.y,position.z-target.z);if(length<.001)return position;
+    let nearest=1;
+    for(const obstacle of combatObstacles){const t=boxHit(target,position,obstacle,.12);if(t!==null&&t>.001)nearest=Math.min(nearest,t);}
+    if(nearest<1){const t=Math.max(0,nearest-clearance/length);position.x=target.x+(position.x-target.x)*t;position.y=target.y+(position.y-target.y)*t;position.z=target.z+(position.z-target.z)*t;}
+    return position;
+  }
   function boxHit(from,to,obstacle,padding=0){
     const c=Math.cos(obstacle.rot||0),s=Math.sin(obstacle.rot||0);
     const transform=p=>[(p.x-obstacle.x)*c-(p.z-obstacle.z)*s,(p.y), (p.x-obstacle.x)*s+(p.z-obstacle.z)*c-(obstacle.offsetZ||0)];
@@ -35,9 +66,10 @@
     return enter<=1&&exit>=0?Math.max(0,enter):null;
   }
   function shotBlock(from,to,vehicles=[]){let nearest=null;const obstacles=[...combatObstacles,...vehicles.map(v=>({x:v.x,z:v.z,rot:v.rotation,hx:v.kind==='car'?.86:.2,hz:v.kind==='car'?1.7:.55,minY:v.y+.35,maxY:v.y+(v.kind==='car'?1.65:.95)}))];for(const obstacle of obstacles){const t=boxHit(from,to,obstacle);if(t!==null&&(nearest===null||t<nearest))nearest=t;}return nearest;}
-  function crossesSolid(from,to){if(from.y>=5||to.y<-.3)return false;for(const obstacle of combatObstacles){if(to.y>=obstacle.maxY-.12||from.y>=obstacle.maxY-.12)continue;const t=boxHit({...from,y:from.y+.75},{...to,y:to.y+.75},obstacle,.18);if(t!==null&&t>.01&&t<.99)return true;}return false;}
+  function crossesSolid(from,to){if(to.y<-.3)return false;for(const obstacle of combatObstacles){if(to.y>=obstacle.maxY-.12||from.y>=obstacle.maxY-.12)continue;const t=boxHit({...from,y:from.y+.75},{...to,y:to.y+.75},obstacle,.18);if(t!==null&&t>.01&&t<.99)return true;}return false;}
   function clearAt(x, z, radius, obstacles = drivingObstacles) {
-    if (Math.abs(x) > 49-radius || Math.abs(z) > 49-radius) return false;
+    const bounds=city.bounds;
+    if (x<bounds.minX+1+radius||x>bounds.maxX-1-radius||z<bounds.minZ+1+radius||z>bounds.maxZ-1-radius||groundHeight(x,z)===null) return false;
     for (const obstacle of obstacles) {
       const dx=x-obstacle.x, dz=z-obstacle.z;
       if (obstacle.r !== undefined) { if (Math.hypot(dx,dz) < obstacle.r+radius) return false; }
@@ -129,5 +161,5 @@
     const face=Math.atan2(seat.x-approach.x,seat.z-approach.z),turn=Math.atan2(Math.sin(vehicle.rotation-face),Math.cos(vehicle.rotation-face));
     return {...position,rotation:face+turn*enter,scale:1+(seat.scale-1)*enter,progress,pull:smooth((progress-.32)/.38),enter};
   }
-  globalThis.LowkeyWorld={SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,keepCameraAboveGround,shotBlock,crossesSolid,initialVehicles,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose};
+  globalThis.LowkeyWorld={MAP_HALF_SIZE,city,SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,waterHeight,waterAt,isSwimming,advanceSwimmer,keepCameraAboveGround,constrainCamera,shotBlock,crossesSolid,initialVehicles,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose};
 })();

@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
+import '../city-layout.js';
 import '../world-systems.js';
 
 test('Zombies chat command starts shared rounds, disables friendly fire and synchronizes late joins', {timeout:20000}, async()=>{
@@ -14,6 +15,7 @@ test('Zombies chat command starts shared rounds, disables friendly fire and sync
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
   await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));
+  await copyFile(new URL('../city-layout.js',import.meta.url),join(fixture,'city-layout.js'));
   await copyFile(new URL('../world-systems.js',import.meta.url),join(fixture,'world-systems.js'));
   for(const file of ['zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
