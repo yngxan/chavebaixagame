@@ -13,6 +13,7 @@ test('multiplayer attacks resolve once at release, obey cooldown and use the aim
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
   await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));
+  await copyFile(new URL('../world-systems.js',import.meta.url),join(fixture,'world-systems.js'));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   const base=`http://127.0.0.1:${port}`,streams=[];
   async function waitFor(predicate){const deadline=Date.now()+4000;while(Date.now()<deadline){const result=predicate();if(result)return result;await delay(10);}throw new Error('Timed out waiting for combat event');}
