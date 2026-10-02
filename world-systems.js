@@ -1,5 +1,5 @@
 (() => {
-  const SEGMENT_MS = 15 * 60 * 1000, TRANSITION_MS = 10000;
+  const SEGMENT_MS = 15 * 60 * 1000, TRANSITION_MS = 10000, HIJACK_MS=1800;
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   function daylight(now) {
     const phase = Math.floor(now / SEGMENT_MS) % 2, elapsed = now % SEGMENT_MS;
@@ -32,10 +32,11 @@
     return true;
   }
   function initialVehicles() {
-    return [{id:'plaza-car',kind:'car',x:-14.5,y:-.05,z:5,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:100,wrecked:false},
+    return [{id:'plaza-car',kind:'car',x:-14.5,y:-.05,z:5,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:250,wrecked:false},
       {id:'plaza-moto',kind:'moto',x:-13.5,y:-.05,z:8.8,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:100,wrecked:false}];
   }
   function advanceVehicle(vehicle, input, dt, obstacles = drivingObstacles) {
+    vehicle.collision=null;
     dt=clamp(dt,0,.05);const moto=vehicle.kind==='moto',throttle=clamp(Number(input.throttle)||0,-1,1),steer=clamp(Number(input.steer)||0,-1,1);
     const maximum=moto?27:22,acceleration=moto?11:9,radius=moto?.46:1.05;
     if (input.brake) vehicle.speed *= Math.exp(-8*dt);
@@ -57,7 +58,7 @@
     const steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/.12));
     for(let step=0;step<steps;step++) {
       const x=vehicle.x+dx/steps,z=vehicle.z+dz/steps;
-      if (!clearAt(x,z,radius,obstacles)) { vehicle.speed=0;vehicle.rotation=oldRotation;break; }
+      if (!clearAt(x,z,radius,obstacles)) { const obstacle=clearAt(x,z,radius,[])?obstacles.find(item=>!clearAt(x,z,radius,[item])):null;vehicle.collision={vehicleId:obstacle?.vehicleId||null,speed:Math.abs(vehicle.speed)};vehicle.speed=0;vehicle.rotation=oldRotation;break; }
       vehicle.x=x;vehicle.z=z;
     }
     vehicle.y=groundHeight(vehicle.x,vehicle.z)??-.05;
@@ -80,6 +81,21 @@
     }
     return null;
   }
-  globalThis.LowkeyWorld={SEGMENT_MS,daylight,groundHeight,initialVehicles,advanceVehicle,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles};
+  function vehicleObstacles(vehicle,records){return [...drivingObstacles,...[...records].filter(other=>other.id!==vehicle.id).map(other=>({x:other.x,z:other.z,r:other.kind==='car'?1.05:.46,vehicleId:other.id}))];}
+  function hijackPose(vehicle,role,now){
+    const action=vehicle.hijacking;if(!action)return null;
+    const progress=clamp((now-action.startedAt)/HIJACK_MS,0,1),smooth=t=>{t=clamp(t,0,1);return t*t*(3-2*t);},seat=driverPose(vehicle),outside=action.outside;
+    const mix=(a,b,t)=>({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,z:a.z+(b.z-a.z)*t});
+    const approach=mix(outside,seat,.38);approach.y=groundHeight(approach.x,approach.z)??vehicle.y;
+    if(role==='victim'){
+      const pull=smooth((progress-.32)/.38),position=mix(action.from,outside,pull);
+      position.y+=Math.sin(pull*Math.PI)*.12;
+      return {...position,rotation:vehicle.rotation+pull*.7,scale:seat.scale+(1-seat.scale)*pull,progress,pull,enter:0};
+    }
+    const arrive=smooth(progress/.22),enter=smooth((progress-.7)/.3),position=mix(mix(action.thiefFrom||outside,approach,arrive),seat,enter);
+    position.y+=Math.sin(enter*Math.PI)*.1;
+    const face=Math.atan2(seat.x-approach.x,seat.z-approach.z),turn=Math.atan2(Math.sin(vehicle.rotation-face),Math.cos(vehicle.rotation-face));
+    return {...position,rotation:face+turn*enter,scale:1+(seat.scale-1)*enter,progress,pull:smooth((progress-.32)/.38),enter};
+  }
+  globalThis.LowkeyWorld={SEGMENT_MS,HIJACK_MS,daylight,groundHeight,initialVehicles,advanceVehicle,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose};
 })();
-

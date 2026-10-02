@@ -13,7 +13,7 @@
         for(const x of [-.76,.76])for(const z of [-.96,.53])box(group,x,1.24,z,.10,.68,.10,paint);
         box(group,0,.97,1.10,1.70,.08,1.06,paint);box(group,0,.82,-1.42,1.72,.16,.58,paint);
         for(const x of [-.91,.91])for(const z of [-1.14,1.14])wheel(x,z,.41,.28,z>0);
-        doorPivot=new THREE.Group();doorPivot.position.set(.90,.78,.52);group.add(doorPivot);box(doorPivot,.40,0,0,.09,.58,1.02,paint);box(doorPivot,.405,.14,0,.07,.28,.84,glass,{cast:false});box(doorPivot,.43,.30,0,.08,.06,.9,paint);
+        doorPivot=new THREE.Group();doorPivot.position.set(.90,.78,.52);group.add(doorPivot);box(doorPivot,.04,0,-.51,.09,.58,1.02,paint);box(doorPivot,.045,.14,-.51,.07,.28,.84,glass,{cast:false});box(doorPivot,.07,.30,-.51,.08,.06,.9,paint);
         for(const x of [-.58,.58]){box(group,x,.80,1.74,.38,.16,.06,lamp,{cast:false});box(group,x,.8,-1.74,.4,.14,.06,mats.red);box(group,x,1.11,.35,.2,.09,.2,paint);}
         box(group,0,.55,1.76,1.68,.12,.08,chrome);box(group,0,.55,-1.76,1.68,.12,.08,chrome);
         for(const x of [-.35,.35])box(group,x,.57,-.10,.55,.12,.57,rubber);
@@ -42,23 +42,24 @@
     function update(dt,now,serverNow,localId,input,night) {
       for(const model of models.values()) {
         const owned=localId&&model.state.driverId===localId;
+        const obstacles=LowkeyWorld.vehicleObstacles(model.state,[...models.values()].map(other=>({...other.state,x:other.group.position.x,z:other.group.position.z}))),controls=model.state.wrecked||model.state.hijacking?{throttle:0,steer:0,brake:true}:input;
         let pose;
         if(owned) {
           if(model.pending) {
             const expected=model.pending,steps=Math.ceil(model.pendingAge/.025);
-            for(let i=0;i<steps;i++)LowkeyWorld.advanceVehicle(expected,input,model.pendingAge/steps);
-            if(Math.hypot(model.predicted.x-expected.x,model.predicted.z-expected.z)>4||model.predicted.driverId!==expected.driverId)model.predicted={...expected};
+            for(let i=0;i<steps;i++){LowkeyWorld.advanceVehicle(expected,controls,model.pendingAge/steps,obstacles);if(expected.collision)break;}
+            if(Math.hypot(model.predicted.x-expected.x,model.predicted.z-expected.z)>4||model.predicted.driverId!==expected.driverId||model.state.hijacking||model.state.wrecked){model.predicted={...expected};model.correction=null;}
             else model.correction={x:expected.x-model.predicted.x,z:expected.z-model.predicted.z,rotation:Math.atan2(Math.sin(expected.rotation-model.predicted.rotation),Math.cos(expected.rotation-model.predicted.rotation))};
             model.predicted.speed=expected.speed;model.predicted.steering=expected.steering;model.pending=null;
           }
-          LowkeyWorld.advanceVehicle(model.predicted,input,dt);
-          if(model.correction){const blend=1-Math.exp(-10*dt);for(const axis of ['x','z','rotation']){const delta=model.correction[axis]*blend;model.predicted[axis]+=delta;model.correction[axis]-=delta;}}
+          LowkeyWorld.advanceVehicle(model.predicted,controls,dt,obstacles);
+          if(model.correction){const blend=1-Math.exp(-10*dt),x=model.predicted.x+model.correction.x*blend,z=model.predicted.z+model.correction.z*blend;if(LowkeyWorld.clearAt(x,z,model.state.kind==='car'?1.05:.46,obstacles)){for(const axis of ['x','z','rotation']){const delta=model.correction[axis]*blend;model.predicted[axis]+=delta;model.correction[axis]-=delta;}}else model.correction=null;}
           pose=model.predicted;
         } else {pose=model.motion.sample(now,dt)||model.state;model.pending=null;}
         model.group.position.x=pose.x;model.group.position.z=pose.z;model.group.position.y=THREE.MathUtils.damp(model.group.position.y,pose.y,14,dt);model.group.rotation.y=pose.rotation;
         const speed=owned?model.predicted.speed:model.state.speed,steer=(owned?model.predicted.steering:model.state.steering)||0;
         model.group.rotation.z=THREE.MathUtils.damp(model.group.rotation.z,model.state.kind==='moto'?Math.max(-.24,Math.min(.24,steer*speed*.013)):0,8,dt);
-        if(model.doorPivot){const age=(serverNow-(model.state.hijacking?.startedAt||0))/1000,progress=model.state.hijacking?Math.max(0,Math.min(1,age/.65)):0,open=model.state.wrecked?.35:Math.sin(progress*Math.PI)*.95;model.doorPivot.rotation.y=THREE.MathUtils.damp(model.doorPivot.rotation.y,-open,18,dt);model.group.rotation.x=THREE.MathUtils.damp(model.group.rotation.x,model.state.wrecked?.08:0,5,dt);}
+        if(model.doorPivot){const progress=model.state.hijacking?Math.max(0,Math.min(1,(serverNow-model.state.hijacking.startedAt)/LowkeyWorld.HIJACK_MS)):0,open=model.state.wrecked?.35:model.state.hijacking?Math.min(1,progress/.28)*Math.min(1,(1-progress)/.12)*1.05:0;model.doorPivot.rotation.y=THREE.MathUtils.damp(model.doorPivot.rotation.y,-open,18,dt);model.group.rotation.x=THREE.MathUtils.damp(model.group.rotation.x,model.state.wrecked?.08:0,5,dt);}
         model.wheelAngle+=speed*dt/(model.state.kind==='car'?.41:.36);
         for(const wheel of model.wheels){wheel.rotation.x=model.wheelAngle;wheel.rotation.y=model.frontWheels.includes(wheel)?-steer*.35:0;}
         model.headlight.intensity=night*(model.state.kind==='car'?7:4);
@@ -66,13 +67,21 @@
     }
     function active(id){if(!id)return null;return [...models.values()].find(model=>model.state.driverId===id||(model.state.passengerIds||[]).includes(id))||null;}
     function isDriver(id,model){return Boolean(id&&model?.state.driverId===id);}
-    function canBoard(model){return Boolean(model&&!model.state.wrecked&&!model.state.hijacking&&(model.state.passengerIds||[]).length<(model.state.kind==='car'?1:1));}
+    function canBoard(model){return Boolean(model&&!model.state.wrecked&&!model.state.hijacking&&(!model.state.driverId||(model.state.passengerIds||[]).length<1));}
     function driverPose(model){return LowkeyWorld.driverPose({...model.state,x:model.group.position.x,y:model.group.position.y,z:model.group.position.z,rotation:model.group.rotation.y});}
     function passengerPose(model,seat=0){return LowkeyWorld.passengerPose({...model.state,x:model.group.position.x,y:model.group.position.y,z:model.group.position.z,rotation:model.group.rotation.y},seat);}
     function pose(model,id){if(isDriver(id,model))return driverPose(model);const seat=(model.state.passengerIds||[]).indexOf(id);return seat>=0?passengerPose(model,seat):driverPose(model);}
-    function nearest(position){return [...models.values()].filter(model=>!model.state.wrecked&&Math.hypot(position.x-model.group.position.x,position.z-model.group.position.z)<=3.2&&Math.abs(position.y-model.group.position.y)<1.5).sort((a,b)=>position.distanceTo(a.group.position)-position.distanceTo(b.group.position))[0]||null;}
-    return{models,receive,update,active,isDriver,canBoard,driverPose,passengerPose,pose,nearest};
+    function nearest(position,predicate=()=>true){return [...models.values()].filter(model=>!model.state.wrecked&&predicate(model)&&Math.hypot(position.x-model.group.position.x,position.z-model.group.position.z)<=3.5&&Math.abs(position.y-model.group.position.y)<1.5).sort((a,b)=>position.distanceTo(a.group.position)-position.distanceTo(b.group.position))[0]||null;}
+    function animateHijack(id,group,arms,legs,body,serverNow){
+      const model=[...models.values()].find(item=>item.state.hijacking&&(item.state.hijacking.thiefId===id||item.state.hijacking.victimId===id));
+      if(!model){if(group.userData.hijacking){group.userData.hijacking=false;group.scale.setScalar(1);body.rotation.set(0,0,0);for(const arm of arms){arm.rotation.set(0,0,0);arm.userData.forearm?.rotation.set(0,0,0);}for(const leg of legs)leg.rotation.set(0,0,0);}return false;}
+      const victim=model.state.hijacking.victimId===id,state={...model.state,x:model.group.position.x,y:model.group.position.y,z:model.group.position.z,rotation:model.group.rotation.y},pose=LowkeyWorld.hijackPose(state,victim?'victim':'thief',serverNow),t=pose.progress;
+      group.userData.hijacking=true;group.position.set(pose.x,pose.y,pose.z);group.rotation.y=pose.rotation;group.scale.setScalar(pose.scale);
+      if(victim){body.rotation.set(-.15*Math.sin(pose.pull*Math.PI),0,-.2*Math.sin(pose.pull*Math.PI));for(const [i,arm] of arms.entries()){arm.rotation.set(-.8*(1-pose.pull),0,(i?1:-1)*(.12+Math.sin(pose.pull*Math.PI)*.35));arm.userData.forearm?.rotation.set(-.3,0,0);}for(const [i,leg] of legs.entries())leg.rotation.set(-1.35*(1-pose.pull)+Math.sin(pose.pull*Math.PI)*(i?-.25:.3),0,0);}
+      else{const reach=Math.max(0,Math.min(1,(t-.12)/.13)),pull=pose.pull,enter=pose.enter;body.rotation.set(.18*reach*(1-enter)-.12*Math.sin(pull*Math.PI),0,-.08*Math.sin(pull*Math.PI));for(const [i,arm] of arms.entries()){const forward=i===0?reach:reach*Math.max(0,Math.min(1,(t-.27)/.1));arm.rotation.set(-1.45*forward*(1-enter)-1.1*enter,0,(i?1:-1)*.16);arm.userData.forearm?.rotation.set(-.2-forward*pull*.75,0,0);}for(const [i,leg] of legs.entries()){const stride=t<.22?Math.sin(t/.22*Math.PI*2)*(i?-.25:.25):0;leg.rotation.set(stride-1.35*enter-(i===0?Math.sin(enter*Math.PI)*.65:0),0,0);}}
+      return true;
+    }
+    return{models,receive,update,active,isDriver,canBoard,driverPose,passengerPose,pose,nearest,animateHijack};
   }
   globalThis.LowkeyVehicles={create};
 })();
-
