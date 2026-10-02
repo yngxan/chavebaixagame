@@ -8,7 +8,7 @@ import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 
-test('multiplayer attacks resolve once at release, obey cooldown and use the aim', {timeout:15000}, async()=>{
+test('punch PvP counts rapid clicks, resolves instantly, applies damage and knockback, and rejects floods', {timeout:15000}, async()=>{
   const fixture=await mkdtemp(join(tmpdir(),'lowkey-combat-test-'));
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
@@ -29,32 +29,33 @@ test('multiplayer attacks resolve once at release, obey cooldown and use the aim
       const hello=await waitFor(()=>events.find(event=>event.type==='hello'));return{cookie,id:hello.id,events};
     }
     const attacker=await player('attacker'),target=await player('target');
-    await post(attacker.cookie,'/api/state',{id:attacker.id,position:{x:0,y:0,z:0}});
-    await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:0,z:1.2}});
-    assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'punch',yaw:0,pitch:0})).status,200);
-    const start=await waitFor(()=>attacker.events.find(event=>event.type==='combat-start'));
-    assert.equal(start.facing,0);assert.equal(attacker.events.some(event=>event.type==='combat-punch'),false);
-    assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'punch',yaw:0,pitch:0})).status,429);
-    const impact=await waitFor(()=>attacker.events.find(event=>event.type==='combat-punch'));
-    assert.equal(impact.targetId,target.id);assert.ok(impact.time-start.time>=200);
-    await delay(850);
-    await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:0,z:-2}});
+    assert.equal((await post(attacker.cookie,'/api/state',{id:attacker.id,position:{x:0,y:.18,z:5}})).status,204);
+    assert.equal((await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:.18,z:7}})).status,204);
+    const attack=(swingId,facing=0)=>post(attacker.cookie,'/api/combat',{id:attacker.id,action:'punch',swingId,facing,pitch:0});
+    const before=Date.now();
+    for(let id=1;id<=8;id++)assert.equal((await attack(id)).status,200,'rapid clicks must not share a cooldown');
+    const impacts=await waitFor(()=>{const all=attacker.events.filter(event=>event.type==='combat-punch');return all.length===8&&all;});
+    assert.deepEqual(impacts.map(event=>event.swingId),[1,2,3,4,5,6,7,8]);
+    for(const impact of impacts){assert.equal(impact.targetId,target.id);assert.equal(impact.damage,4);assert.equal(impact.impulse.y,3.2);assert.ok(impact.impulse.z>=4.8);}
+    assert.equal(impacts.at(-1).health,68,'every accepted click deals damage');
+    const start=attacker.events.find(event=>event.type==='combat-start');
+    assert.equal(impacts[0].time,start.time,'hit resolves immediately, not after an animation timer');
+    assert.ok(impacts[0].time-before<200);
+    assert.equal((await attack(1)).status,200,'network retries are idempotent');
+    assert.equal((await post(target.cookie,'/api/combat',{id:attacker.id,action:'punch',swingId:9})).status,401);
+    assert.equal((await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:.45,z:8.2},jumping:true})).status,204,'legitimate knockback is accepted by movement protection');
+    for(let id=9;id<=30;id++)assert.equal((await attack(id,Math.PI)).status,200,'swings facing away miss without blocking the next click');
+    await waitFor(()=>attacker.events.filter(event=>event.type==='combat-punch').length===30);
+    assert.equal(attacker.events.filter(event=>event.type==='combat-punch').at(-1).targetId,null);
+    assert.equal((await attack(31)).status,429,'protect the server against automated request floods');
+    await delay(1050);
     const mark=attacker.events.length;
-    assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'snowball',facing:Math.PI/2,yaw:0,pitch:1})).status,200);
-    const throwStart=await waitFor(()=>attacker.events.slice(mark).find(event=>event.type==='combat-start'));
-    assert.equal(attacker.events.slice(mark).some(event=>event.type==='combat-throw'),false);
+    assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'snowball',facing:Math.PI/2,pitch:-.4})).status,200);
     const release=await waitFor(()=>attacker.events.slice(mark).find(event=>event.type==='combat-throw'));
-    assert.ok(release.projectile.time-throwStart.time>=300);assert.ok(release.projectile.velocity.x>13);assert.equal(throwStart.facing,Math.PI/2);
-    assert.ok(Math.abs(release.projectile.velocity.z)<1,'camera yaw must not steer the throw');
-    assert.ok(Math.abs(release.projectile.velocity.y-.8)<.01,'camera pitch must not steer the throw');
+    assert.ok(release.projectile.velocity.x>13);assert.ok(release.projectile.velocity.y>0);
+    assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'snowball',facing:0,pitch:0})).status,429,'snowball retains its separate cooldown');
+    assert.equal((await attack(32,Math.PI)).status,200,'a snowball cooldown does not block punching');
     assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'tomato'})).status,400);
-    assert.equal(attacker.events.filter(event=>event.type==='combat-punch').length,1);
-    assert.equal(attacker.events.filter(event=>event.type==='combat-throw').length,1);
-    await delay(850);
-    assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'snowball',yaw:0,pitch:0})).status,200);
-    assert.equal((await post(attacker.cookie,'/api/emote',{id:attacker.id,emote:'wave'})).status,204);
-    await delay(400);
-    assert.equal(attacker.events.filter(event=>event.type==='combat-throw').length,1,'an interrupted throw must not launch an invisible ball');
   }finally{
     for(const stream of streams)stream.abort();const stopped=once(child,'exit');child.kill();await stopped;
     assert.equal(dirname(resolve(fixture)),resolve(tmpdir()));assert.ok(basename(fixture).startsWith('lowkey-combat-test-'));

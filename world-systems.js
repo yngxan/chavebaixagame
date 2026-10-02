@@ -32,8 +32,8 @@
     return true;
   }
   function initialVehicles() {
-    return [{id:'plaza-car',kind:'car',x:-14.5,y:-.05,z:5,rotation:Math.PI/2,speed:0,driverId:null},
-      {id:'plaza-moto',kind:'moto',x:-13.5,y:-.05,z:8.8,rotation:Math.PI/2,speed:0,driverId:null}];
+    return [{id:'plaza-car',kind:'car',x:-14.5,y:-.05,z:5,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:100,wrecked:false},
+      {id:'plaza-moto',kind:'moto',x:-13.5,y:-.05,z:8.8,rotation:Math.PI/2,speed:0,driverId:null,passengerIds:[],health:100,wrecked:false}];
   }
   function advanceVehicle(vehicle, input, dt, obstacles = drivingObstacles) {
     dt=clamp(dt,0,.05);const moto=vehicle.kind==='moto',throttle=clamp(Number(input.throttle)||0,-1,1),steer=clamp(Number(input.steer)||0,-1,1);
@@ -67,6 +67,11 @@
     const offset=vehicle.kind==='car'?.32:0,scale=vehicle.kind==='car'?.62:.85;
     return {x:vehicle.x+Math.cos(vehicle.rotation)*offset,y:vehicle.y+(vehicle.kind==='car'?-.015:.02),z:vehicle.z-Math.sin(vehicle.rotation)*offset,rotation:vehicle.rotation,scale};
   }
+  function passengerPose(vehicle,seat=0) {
+    const offset=vehicle.kind==='car'?{x:-.48,z:-.08}:{x:0,z:-.67};
+    const scale=vehicle.kind==='car'?.62:.85,c=Math.cos(vehicle.rotation),s=Math.sin(vehicle.rotation);
+    return{x:vehicle.x+offset.x*c+offset.z*s,y:vehicle.y+(vehicle.kind==='car'?-.015:.02),z:vehicle.z-offset.x*s+offset.z*c,rotation:vehicle.rotation,scale,seat};
+  }
   function exitPosition(vehicle) {
     const radius=vehicle.kind==='car'?1.05:.46;
     for (const [side,forward] of [[1,0],[-1,0],[0,-1],[0,1]]) {
@@ -75,5 +80,5 @@
     }
     return null;
   }
-  globalThis.LowkeyWorld={SEGMENT_MS,daylight,groundHeight,initialVehicles,advanceVehicle,driverPose,exitPosition,clearAt,drivingObstacles};
+  globalThis.LowkeyWorld={SEGMENT_MS,daylight,groundHeight,initialVehicles,advanceVehicle,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles};
 })();
