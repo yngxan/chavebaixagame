@@ -44,6 +44,7 @@ test('only existing owner account controls shared video; join snapshot includes 
  const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');const port=reservation.address().port;await new Promise(done=>reservation.close(done));
  await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));await mkdir(join(fixture,'data'));
   await copyFile(new URL('../world-systems.js',import.meta.url),join(fixture,'world-systems.js'));
+  for(const file of ['zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
  const hash=token=>createHash('sha256').update(token).digest('hex');
  await writeFile(join(fixture,'data','accounts.json'),JSON.stringify({accounts:[{id:'owner',username:'yngxan',profile:{}},{id:'guest',username:'guest',profile:{name:'YNGXAN'}}],sessions:['owner','guest'].map(id=>({tokenHash:hash(id+'-token'),accountId:id,expiresAt:new Date(Date.now()+60000).toISOString()}))}));
  const launch=()=>spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});

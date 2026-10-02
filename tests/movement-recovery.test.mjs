@@ -12,7 +12,7 @@ test('delayed movement, rapid falling and return to the actual reconnect spawn d
   const fixture=await mkdtemp(join(tmpdir(),'lowkey-recovery-test-'));
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
-  for(const file of ['server.mjs','world-systems.js'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+  for(const file of ['server.mjs','world-systems.js','zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   let logs='',ready=false;child.stderr.on('data',chunk=>logs+=chunk);child.stdout.on('data',chunk=>{if(String(chunk).includes('multiplayer pronta'))ready=true;});
   const base=`http://127.0.0.1:${port}`,streams=[];

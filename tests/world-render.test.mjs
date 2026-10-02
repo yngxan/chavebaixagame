@@ -42,6 +42,24 @@ test('a passenger does not block a free driver seat and prediction stops at anot
   const car=controller.active('driver');assert.ok(car.group.position.z<=21.49);assert.equal(car.predicted.speed,0);
 });
 
+test('a remote wheelie tilts the bike and both seated players around the rear axle',()=>{
+  const scene=new THREE.Scene(),material=new THREE.MeshStandardMaterial();
+  const box=(parent,x,y,z,sx,sy,sz,mat)=>{const mesh=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),mat);mesh.position.set(x,y,z);parent.add(mesh);return mesh;};
+  const controller=sandbox.LowkeyVehicles.create({THREE,scene,box,mats:{red:material}}),records=sandbox.LowkeyWorld.initialVehicles(),bike=records[1];
+  Object.assign(bike,{x:0,z:20,rotation:.7,driverId:'driver',passengerIds:['passenger'],speed:8,wheelieAngle:.6});
+  controller.receive({vehicles:records,serverTime:100},100,100);
+  for(let i=0;i<35;i++)controller.update(1/60,100+i*16,100+i*16,null,{throttle:0,steer:0},0);
+  const model=controller.active('driver');assert.ok(model.group.rotation.x<-.59);model.group.updateMatrixWorld(true);
+  for(const [id,z] of [['driver',0],['passenger',-.67]]){
+    const seat=controller.pose(model,id),expected=new THREE.Vector3(0,.02,z).applyMatrix4(model.group.matrixWorld);
+    assert.ok(expected.distanceTo(new THREE.Vector3(seat.x,seat.y,seat.z))<1e-8);assert.equal(seat.pitch,model.group.rotation.x);
+  }
+  const rearAxle=new THREE.Vector3(0,.36,-.85).applyMatrix4(model.group.matrixWorld);assert.ok(Math.abs(rearAxle.y-(bike.y+.36))<1e-8);
+  bike.wheelieAngle=0;controller.receive({vehicles:records,serverTime:800},800,800);
+  for(let i=0;i<40;i++)controller.update(1/60,800+i*16,800+i*16,null,{throttle:0,steer:0},0);
+  assert.ok(Math.abs(model.group.rotation.x)<.001);
+});
+
 test('night actually changes sky, lamp illumination, moon and stars in the scene',()=>{
   const scene=new THREE.Scene();scene.fog=new THREE.Fog(0xadcbd1,45,115);
   const sky=new THREE.Mesh(new THREE.SphereGeometry(1),new THREE.ShaderMaterial({uniforms:{daylight:{value:1}}}));

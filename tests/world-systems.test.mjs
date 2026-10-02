@@ -5,6 +5,38 @@ import vm from 'node:vm';
 import '../world-systems.js';
 const world=globalThis.LowkeyWorld;
 
+test('the same interaction chooses the approached seat at every vehicle heading',()=>{
+  for(const kind of ['car','moto'])for(const rotation of [0,Math.PI/2,Math.PI,-Math.PI/2]){
+    const vehicle={...world.initialVehicles().find(item=>item.kind===kind),rotation,driverId:'driver'};
+    const position=(x,z)=>({x:vehicle.x+x*Math.cos(rotation)+z*Math.sin(rotation),z:vehicle.z-x*Math.sin(rotation)+z*Math.cos(rotation)});
+    const driver=position(kind==='car'?2:0,kind==='moto'?1.5:0),passenger=position(kind==='car'?-2:0,kind==='moto'?-1.5:0);
+    assert.deepEqual(world.vehicleInteraction(vehicle,driver),{seat:'driver',action:'steal',blocked:false});
+    assert.deepEqual(world.vehicleInteraction(vehicle,passenger),{seat:'passenger',action:'enter',blocked:false});
+    vehicle.passengerIds=['passenger'];assert.equal(world.vehicleInteraction(vehicle,passenger).blocked,true);
+    assert.equal(world.vehicleInteraction(vehicle,driver).blocked,false,'a full passenger seat cannot prevent taking the driver seat');
+    vehicle.driverId=null;assert.equal(world.vehicleInteraction(vehicle,driver).action,'enter');
+    vehicle.passengerIds=[];assert.equal(world.vehicleInteraction(vehicle,passenger).seat,'passenger','empty vehicles still use the approached seat');
+  }
+});
+
+test('wheelies raise only a moving motorcycle and settle on release, brake, reverse or collision',()=>{
+  const bike={...world.initialVehicles()[1],x:0,z:0,rotation:0,speed:8};
+  for(let i=0;i<30;i++)world.advanceVehicle(bike,{throttle:1,wheelie:true},1/60,[]);
+  assert.ok(bike.wheelieAngle>.5&&bike.wheelieAngle<=.6);
+  const frame=world.vehicleFrame(bike),rearY=frame.y+.36*Math.cos(bike.wheelieAngle)-.85*Math.sin(bike.wheelieAngle)-.36,rearZ=frame.z-.85*Math.cos(bike.wheelieAngle)-.36*Math.sin(bike.wheelieAngle);
+  assert.ok(Math.abs(rearY-bike.y)<1e-8,'rear contact remains on the ground');
+  assert.ok(Math.abs(rearZ-(bike.z-.85))<1e-8,'bike pivots around the rear contact');
+  assert.ok(world.driverPose(bike).pitch<-.5);assert.equal(world.passengerPose(bike).pitch,world.driverPose(bike).pitch);
+  for(let i=0;i<40;i++)world.advanceVehicle(bike,{throttle:1,wheelie:false},1/60,[]);
+  assert.ok(bike.wheelieAngle<.003);
+  for(const state of [{kind:'car',speed:10},{kind:'moto',speed:0},{kind:'moto',speed:-5},{kind:'moto',speed:10,brake:true}]){
+    const vehicle={...bike,...state,wheelieAngle:.5};for(let i=0;i<40;i++)world.advanceVehicle(vehicle,{throttle:state.speed<0?-1:0,wheelie:true,brake:state.brake},1/60,[]);
+    assert.ok(vehicle.wheelieAngle<.003);
+  }
+  const crashed={...bike,speed:10,wheelieAngle:.5};world.advanceVehicle(crashed,{throttle:1,wheelie:true},.05,[{x:crashed.x,z:crashed.z+.55,r:.3}]);
+  assert.ok(crashed.collision);assert.ok(crashed.wheelieAngle<.5,'collision lowers the front wheel');
+});
+
 test('braking still records a real impact and identifies the obstacle actually hit',()=>{
   const car={...world.initialVehicles()[0],x:0,z:20,rotation:0,speed:22};
   world.advanceVehicle(car,{brake:true},.05,[{x:0,z:21.4,hx:2,hz:.2},{x:2,z:20,r:.46,vehicleId:'nearby-moto'}]);

@@ -6,9 +6,13 @@ import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSa
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import './world-systems.js';
+import {createZombiesGame} from './zombies-server.mjs';
+import {createGameGuard} from './game-security.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const INFINITE_GLOCK_AMMO = true;
+// The next anti-bot revision is paused while we finish the Zombies mode.
+const ADVANCED_SECURITY_ENABLED = false;
 const PORT = Number(process.env.PORT || 4173);
 const MAX_PLAYERS = 32;
 const CHAT_RADIUS = 12;
@@ -24,7 +28,10 @@ const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const PROFILE_FILE = join(ROOT, 'data', 'accounts.json');
 const scrypt = promisify(scryptCallback);
 const clients = new Map();
+const bannedAccounts=new Set();
+const gameGuard=createGameGuard({siteKey:process.env.TURNSTILE_SITE_KEY||'',secretKey:process.env.TURNSTILE_SECRET_KEY||'',hostname:process.env.TURNSTILE_HOSTNAME|| (process.env.RENDER_EXTERNAL_URL?new URL(process.env.RENDER_EXTERNAL_URL).hostname:'')});
 const players = new Map();
+const lastKnownVitals=new Map();
 const vehicles = new Map(LowkeyWorld.initialVehicles().map(vehicle=>[vehicle.id,vehicle]));
 const vehicleInputs = new Map();
 const pendingHijacks=new Map();
@@ -35,7 +42,7 @@ function releaseVehicle(player) {
   if(!vehicle)return;
   const driver=vehicle.driverId===player.id,seat=(vehicle.passengerIds||[]).indexOf(player.id);
   if(!driver&&seat<0)return;
-  if(driver){vehicle.driverId=null;vehicle.speed=0;vehicleInputs.delete(vehicle.id);}else vehicle.passengerIds.splice(seat,1);
+  if(driver){vehicle.driverId=null;vehicle.speed=0;vehicle.wheelieAngle=0;vehicleInputs.delete(vehicle.id);}else vehicle.passengerIds.splice(seat,1);
   player.vehicleId=null;player.vehicleSeat=null;
   const exit=LowkeyWorld.exitPosition(vehicle);if(exit)player.position=exit;
   player.walking=false;player.jumping=false;player.speed=0;player.motionTime=Date.now();player.motionReset=(player.motionReset||0)+1;
@@ -63,6 +70,13 @@ function notifyVehicleDamage(vehicle,damage,now) {
   broadcast(message);
 }
 const projectiles = new Map();
+const zombiesGame=createZombiesGame({world:LowkeyWorld,players,broadcast,restorePlayers(){for(const player of players.values()){player.health=100;const client=clients.get(player.id);if(client){client.deadUntil=0;send(client.response,{type:'weapon-health',targetId:player.id,health:100});}}},damagePlayer(target,damage,zombie){
+  const now=Date.now(),client=clients.get(target.id);if(!client||client.deadUntil)return;
+  target.health=Math.max(0,target.health-damage);client.deadUntil=target.health<=0?now+2200:0;client.externalImpulseUntil=now+1800;client.movementCredits=Math.min(7,(client.movementCredits||0)+2);
+  send(client.response,{type:'weapon-health',targetId:target.id,health:target.health,deadUntil:client.deadUntil,impulse:{x:Math.sin(zombie.rotation)*2,z:Math.cos(zombie.rotation)*2,y:2.4}});
+  broadcast({type:'zombie-player-hit',targetId:target.id,time:now});
+}});
+function combatTargets(id){return [...(zombiesGame.active?zombiesGame.zombies.values():players.values())].filter(target=>target.id!==id&&target.health>0&&(!target.enemy||Date.now()>=target.spawnAt+1600));}
 // Movement is client-predicted for responsiveness, but accepted positions stay server-bounded.
 // Credits allow jump/knockback and short network jitter without permitting teleport speeds.
 const SECURITY_WINDOW_MS = 15000;
@@ -100,7 +114,7 @@ const failedLogins = new Map();
 const sessionAccounts = new Map();
 const authRequests = new Map();
 let database = null;
-let localAccounts = { accounts: [], sessions: [] };
+let localAccounts = { accounts: [], sessions: [], bans: [] };
 let localWriteQueue = Promise.resolve();
 const allowedFiles = new Map([
   ['/', 'index.html'],
@@ -110,6 +124,7 @@ const allowedFiles = new Map([
   ['/motion-sync.js', 'motion-sync.js'],
   ['/world-systems.js', 'world-systems.js'],
   ['/vehicles-client.js', 'vehicles-client.js'],
+  ['/zombies-client.js', 'zombies-client.js'],
   ['/environment.js', 'environment.js'],
   ['/THREE-LICENSE.txt', 'THREE-LICENSE.txt'],
   ['/LEIA-ME.md', 'LEIA-ME.md'],
@@ -234,12 +249,15 @@ async function initializeAccountStore() {
       expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
     await database.query('CREATE INDEX IF NOT EXISTS lowkey_sessions_expiry_idx ON lowkey_sessions (expires_at)');
+    await database.query('CREATE TABLE IF NOT EXISTS lowkey_bans (account_id UUID PRIMARY KEY REFERENCES lowkey_accounts(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+    for(const row of (await database.query('SELECT account_id FROM lowkey_bans')).rows)bannedAccounts.add(row.account_id);
     console.log('Armazenamento de contas conectado ao PostgreSQL.');
     return;
   }
   try {
     const saved = JSON.parse(await readFile(PROFILE_FILE, 'utf8'));
-    localAccounts = { accounts: Array.isArray(saved.accounts) ? saved.accounts : [], sessions: Array.isArray(saved.sessions) ? saved.sessions : [] };
+    localAccounts = { accounts: Array.isArray(saved.accounts) ? saved.accounts : [], sessions: Array.isArray(saved.sessions) ? saved.sessions : [], bans:Array.isArray(saved.bans)?saved.bans:[] };
+    for(const id of localAccounts.bans)bannedAccounts.add(id);
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   console.log('Armazenamento local de contas ativo (senhas protegidas por hash).');
 }
@@ -309,11 +327,12 @@ async function accountForRequest(request) {
   if (!token || token.length > 100) return null;
   const hash = tokenHash(token);
   const cached = sessionAccounts.get(hash);
-  if (cached && cached.validUntil > Date.now()) return cached.account;
+  if (cached && cached.validUntil > Date.now()) return bannedAccounts.has(cached.account.id)?null:cached.account;
   sessionAccounts.delete(hash);
   let account = null, expiresAt = 0;
   if (database) { const result = await database.query('SELECT a.id, a.username, a.profile, s.expires_at AS "expiresAt" FROM lowkey_sessions s JOIN lowkey_accounts a ON a.id = s.account_id WHERE s.token_hash = $1 AND s.expires_at > NOW()', [hash]); if (result.rows[0]) { account = publicAccount(result.rows[0]); expiresAt = new Date(result.rows[0].expiresAt).getTime(); } }
   else { const session = localAccounts.sessions.find(item => item.tokenHash === hash && Date.parse(item.expiresAt) > Date.now()); if (session) { const stored = await findAccountById(session.accountId); account = stored ? publicAccount(stored) : null; expiresAt = Date.parse(session.expiresAt); } }
+  if(account&&bannedAccounts.has(account.id))return null;
   if (account) sessionAccounts.set(hash, { account, validUntil: Math.min(expiresAt, Date.now() + 30000) });
   return account;
 }
@@ -339,6 +358,22 @@ function limitAuthRequests(request) {
   const key = clientAddress(request), now = Date.now(), attempts = (authRequests.get(key) || []).filter(at => now - at < 15 * 60 * 1000);
   if (attempts.length >= 100) return true;
   attempts.push(now); authRequests.set(key, attempts); return false;
+}
+function closeRoomClient(id,reason=null){
+  const client=clients.get(id),player=players.get(id);if(!client)return;
+  if(reason)send(client.response,{type:'room-closed',text:reason});
+  clients.delete(id);
+  for(const vehicle of vehicles.values())if(vehicle.hijacking?.thiefId===id||vehicle.hijacking?.victimId===id)cancelVehicleHijack(vehicle);
+  const riding=Boolean(player?.vehicleId);releaseVehicle(player);
+  if(player){lastKnownVitals.set(player.accountId,{health:player.health,deadUntil:client.deadUntil});lastKnownPositions.set(player.accountId,{...player.position});}
+  void queueVoiceMutation(client,()=>cleanupSfuClient(client));players.delete(id);client.response.end();broadcast({type:'leave',id});if(riding)broadcast({type:'world-state',...worldSnapshot()});
+}
+async function setAccountBanned(account,ban){
+  if(isAdministrator(account))throw Object.assign(new Error('O administrador não pode ser banido.'),{statusCode:403});
+  if(database){if(ban)await database.query('INSERT INTO lowkey_bans (account_id) VALUES ($1) ON CONFLICT DO NOTHING',[account.id]);else await database.query('DELETE FROM lowkey_bans WHERE account_id=$1',[account.id]);}
+  else{localAccounts.bans=localAccounts.bans.filter(id=>id!==account.id);if(ban)localAccounts.bans.push(account.id);await persistLocalAccounts();}
+  if(ban)bannedAccounts.add(account.id);else bannedAccounts.delete(account.id);
+  if(ban)for(const[id,client]of clients)if(client.accountId===account.id)closeRoomClient(id,'Sua conta foi banida pelo administrador.');
 }
 function hasSfuConfig() { return Boolean(SFU_APP_ID && SFU_APP_SECRET); }
 function allowSfuSession(client) {
@@ -433,6 +468,8 @@ async function cleanupSfuClient(client) {
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+  if(ADVANCED_SECURITY_ENABLED&&request.method==='POST'&&request.headers.origin){let origin;try{origin=new URL(request.headers.origin);}catch{return json(response,403,{error:'Origem de acesso inválida.'});}if(origin.host!==request.headers.host)return json(response,403,{error:'Abra o jogo pelo endereço oficial.'});}
+  if(request.method==='GET'&&url.pathname==='/api/auth/config')return json(response,200,ADVANCED_SECURITY_ENABLED?gameGuard.publicConfig():{enabled:false,siteKey:''});
   if (request.method === 'GET' && url.pathname === '/healthz') {
     try { if (database) await database.query({ text: 'SELECT 1', query_timeout: 3000 }); return json(response, 200, { ok: true }); }
     catch { return json(response, 503, { ok: false }); }
@@ -440,7 +477,9 @@ const server = createServer(async (request, response) => {
   if (request.method === 'POST' && ['/api/auth/register', '/api/auth/login'].includes(url.pathname) && limitAuthRequests(request)) return json(response, 429, { error: 'Muitas tentativas de entrada. Aguarde alguns minutos.' });
   if (request.method === 'POST' && url.pathname === '/api/auth/register') {
     try {
+      if(ADVANCED_SECURITY_ENABLED&&!gameGuard.allow('signup:'+clientAddress(request),8/3600,8))return json(response,429,{error:'Muitas contas criadas nesta rede. Tente mais tarde.'});
       const data = await readJson(request, 4096), username = normalizeUsername(data.username), password = String(data.password || '');
+      if(ADVANCED_SECURITY_ENABLED)await gameGuard.verifyHuman(data.challengeToken,clientAddress(request));
       if (!validUsername(username)) return json(response, 400, { error: 'Use um usuário de 3 a 20 caracteres: letras, números, ponto, traço ou underline.' });
       if (password.length < 8 || password.length > 128) return json(response, 400, { error: 'A senha precisa ter entre 8 e 128 caracteres.' });
       if (authRateLimited(username)) return json(response, 429, { error: 'Muitas tentativas para esse usuário. Aguarde 15 minutos.' });
@@ -461,6 +500,7 @@ const server = createServer(async (request, response) => {
   if (request.method === 'POST' && url.pathname === '/api/auth/login') {
     try {
       const data = await readJson(request, 4096), username = normalizeUsername(data.username), password = String(data.password || '');
+      if(ADVANCED_SECURITY_ENABLED)await gameGuard.verifyHuman(data.challengeToken,clientAddress(request));
       if (authRateLimited(username)) return json(response, 429, { error: 'Muitas tentativas para esse usuário. Aguarde 15 minutos.' });
       const account = validUsername(username) ? await findAccountByUsername(username) : null;
       const salt = account?.passwordSalt || account?.password_salt || '4a6f10a9d624e8e882f80c9a5d9a1578';
@@ -468,6 +508,7 @@ const server = createServer(async (request, response) => {
       const candidate = Buffer.from(await passwordHash(password.slice(0, 128), salt), 'hex'), expected = Buffer.from(actualHash, 'hex');
       const matches = expected.length === candidate.length && timingSafeEqual(expected, candidate);
       if (!account || !matches) { noteFailedLogin(username); return json(response, 401, { error: 'Usuário ou senha incorretos.' }); }
+      if(bannedAccounts.has(account.id))return json(response,403,{error:'Essa conta foi banida da praça.'});
       failedLogins.delete(username);
       response.setHeader('set-cookie', sessionCookie(request, await createAccountSession(account.id)));
       return json(response, 200, { user: publicAccount(account) });
@@ -504,6 +545,8 @@ const server = createServer(async (request, response) => {
     try { authenticatedAccount = await accountForRequest(request); }
     catch { return json(response, 503, { error: 'O serviço de contas está indisponível.' }); }
     if (!authenticatedAccount) return json(response, 401, { error: 'Entre na sua conta para jogar.' });
+    const rates={'/api/state':[35,70],'/api/combat':[32,35],'/api/vehicle':[25,40],'/api/chat':[3,6],'/api/stage':[5,10]};
+    if(ADVANCED_SECURITY_ENABLED&&request.method==='POST'&&rates[url.pathname]){const[rate,capacity]=rates[url.pathname];if(!gameGuard.allow(authenticatedAccount.id+url.pathname,rate,capacity))return json(response,429,{error:'Muitas ações ao mesmo tempo. Aguarde um instante.'});}
   }
   if (request.method === 'GET' && url.pathname === '/api/stage') return json(response, 200, stageSnapshot(authenticatedAccount.id));
   if (request.method === 'POST' && url.pathname === '/api/stage') {
@@ -554,6 +597,8 @@ const server = createServer(async (request, response) => {
     const cooldownUntil = securityCooldowns.get(authenticatedAccount.id) || 0;
     if (cooldownUntil > Date.now()) return json(response, 403, { error: 'Entrada pausada por movimento inválido. Tente novamente em instantes.' });
     if (cooldownUntil) securityCooldowns.delete(authenticatedAccount.id);
+    if(ADVANCED_SECURITY_ENABLED&&!gameGuard.allow('join:'+authenticatedAccount.id,.2,6))return json(response,429,{error:'Muitas reconexões. Aguarde um instante.'});
+    if(ADVANCED_SECURITY_ENABLED)for(const[id,old]of clients)if(old.accountId===authenticatedAccount.id)closeRoomClient(id,'Sua conta entrou em outro dispositivo ou aba.');
     const address = clientAddress(request), connectionsFromAddress = [...clients.values()].filter(client => client.address === address).length;
     if (connectionsFromAddress >= 8) return json(response, 429, { error: 'Este endereço já tem muitas conexões ativas na praça.' });
     if (clients.size >= MAX_PLAYERS) return json(response, 503, { error: 'Sala cheia (limite: 32 jogadores).' });
@@ -563,9 +608,10 @@ const server = createServer(async (request, response) => {
     const radius = 2.8 + Math.floor(existingPlayers.length / 10) * 0.5;
     const profile = cleanProfile(authenticatedAccount.profile, authenticatedAccount.username.toUpperCase());
     const player = {
-      id, accountId: authenticatedAccount.id, name: profile.name, appearance: profile.appearance,
+      id, accountId: authenticatedAccount.id, username:authenticatedAccount.username, name: profile.name, appearance: profile.appearance,
       position: lastKnownPositions.get(authenticatedAccount.id) || { x: Math.cos(angle) * radius, y: 18, z: 5 + Math.sin(angle) * radius }, rotation: 0, walking: false, jumping: true, speed: 0, voiceEnabled: false, voiceSessionId: null, health: 100, glockEquipped: false, vehicleId:null,vehicleSeat:null,lastVehicleImpactAt:0,
     };
+    const savedVitals=lastKnownVitals.get(authenticatedAccount.id);if(savedVitals)player.health=savedVitals.health;
     response.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
@@ -577,20 +623,15 @@ const server = createServer(async (request, response) => {
     players.set(id, player);
     clients.get(id).compactMotion = url.searchParams.get('motion') === '2';
     clients.get(id).playerId = id;
-    send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: stageSnapshot(authenticatedAccount.id), weapon: { mag: 20, reserve: 120, reloading: false }, health: 100 });
+    if(savedVitals)clients.get(id).deadUntil=savedVitals.deadUntil;
+    send(response, { type: 'hello', id, spawn: player.position, players: existingPlayers, stageMedia: stageSnapshot(authenticatedAccount.id), weapon: { mag: 20, reserve: 120, reloading: false }, health: player.health,deadUntil:clients.get(id).deadUntil });
     send(response, {type:'world-state',...worldSnapshot()});
+    send(response,zombiesGame.snapshot());
     broadcast({ type: 'join', player }, id);
     response.on('close', () => {
       const current = clients.get(id);
       if (!current || current.response !== response) return;
-      clients.delete(id);
-      const departing=players.get(id),wasRiding=Boolean(departing?.vehicleId);
-      for(const vehicle of vehicles.values())if(vehicle.hijacking?.thiefId===id||vehicle.hijacking?.victimId===id)cancelVehicleHijack(vehicle);
-      releaseVehicle(departing);
-      if(wasRiding)broadcast({type:'world-state',...worldSnapshot()});
-      void queueVoiceMutation(current, () => cleanupSfuClient(current));
-      players.delete(id);
-      broadcast({ type: 'leave', id });
+      closeRoomClient(id);
     });
     return;
   }
@@ -639,6 +680,11 @@ const server = createServer(async (request, response) => {
       const fallReset = player.position.y < -35 && nextPosition.y >= 12 && Math.hypot(nextPosition.x - client.respawnPosition.x, nextPosition.z - client.respawnPosition.z) <= 1.5;
       const verticalLimit=elapsed*(dy<0?65:18)+1.8;
       if ((!fallReset && horizontalDistance > movementCredits + .35) || (!initialSpawnFall && !fallReset && verticalDistance > verticalLimit)) return noteMovementViolation(client, response, `velocidade impossível: horizontal=${horizontalDistance.toFixed(2)}, vertical=${verticalDistance.toFixed(2)}, intervalo=${elapsed.toFixed(3)}, altura=${player.position.y.toFixed(2)}→${nextPosition.y.toFixed(2)}`);
+      if(ADVANCED_SECURITY_ENABLED&&!fallReset&&!initialSpawnFall&&LowkeyWorld.crossesSolid(player.position,nextPosition))return noteMovementViolation(client,response,'atravessou um obstáculo');
+      const support=LowkeyWorld.supportHeight(nextPosition.x,nextPosition.z);
+      if(fallReset||initialSpawnFall&&nextPosition.y>3){client.spawnFallUntil=client.spawnFallUntil||now+5500;client.airSince=0;}
+      else if(ADVANCED_SECURITY_ENABLED&&support!==null&&nextPosition.y>support+.24){client.airSince||=now;if(now>(client.spawnFallUntil||0)&&now>(client.externalImpulseUntil||0)&&(nextPosition.y>support+2.1||now-client.airSince>2200))return noteMovementViolation(client,response,'voo ou flutuação impossível');}
+      else{client.airSince=0;client.spawnFallUntil=0;}
       client.motionAt = now;
       client.movementCredits = fallReset ? 4 : Math.min(5, Math.max(0, movementCredits - horizontalDistance));
       lastKnownPositions.set(client.accountId, nextPosition);
@@ -678,14 +724,23 @@ const server = createServer(async (request, response) => {
       const data=await readJson(request,2048),player=players.get(String(data.id||'')),client=clients.get(String(data.id||'')),now=Date.now();
       if(!player||!client||client.accountId!==authenticatedAccount.id)return json(response,401,{error:'Jogador não conectado.'});
       if(client.deadUntil)return json(response,409,{error:'Espere voltar à praça.'});
-      if(client.hijackingVehicleId&&(data.action==='enter'||data.action==='steal'))return json(response,409,{error:'Aguarde o roubo terminar.'});
-      if(data.action==='enter') {
+      let action=data.action,boarding=null;
+      if(['interact','enter','steal'].includes(action)) {
+        if(client.hijackingVehicleId)return json(response,409,{error:'Aguarde o roubo terminar.'});
+        if(player.vehicleId)return json(response,409,{error:'Saia do veículo atual primeiro.'});
+        const vehicle=vehicles.get(String(data.vehicleId||''));if(!vehicle)return json(response,404,{error:'Veículo não encontrado.'});
+        if(Math.hypot(player.position.x-vehicle.x,player.position.z-vehicle.z)>3.55||Math.abs(player.position.y-vehicle.y)>1.5)return json(response,403,{error:'Chegue mais perto para entrar.'});
+        boarding=LowkeyWorld.vehicleInteraction(vehicle,player.position);
+        if(boarding.blocked)return json(response,409,{error:vehicle.wrecked?'Esse veículo está destruído.':vehicle.hijacking?'Aguarde o roubo terminar.':'O lugar de carona está ocupado.'});
+        action=boarding.action;
+      }
+      if(action==='enter') {
         if(player.vehicleId)return json(response,409,{error:'Você já está em um veículo.'});
         const vehicle=vehicles.get(String(data.vehicleId||''));if(!vehicle)return json(response,404,{error:'Veículo não encontrado.'});
         if(vehicle.wrecked||vehicle.hijacking)return json(response,409,{error:'Esse veículo não pode ser ocupado agora.'});
         if(Math.hypot(player.position.x-vehicle.x,player.position.z-vehicle.z)>3.55||Math.abs(player.position.y-vehicle.y)>1.5)return json(response,403,{error:'Chegue mais perto para entrar.'});
-        if(!vehicle.driverId){vehicle.driverId=player.id;player.vehicleSeat='driver';vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:-1});}
-        else if((vehicle.passengerIds||[]).length<1){vehicle.passengerIds||=[];vehicle.passengerIds.push(player.id);player.vehicleSeat='passenger';}
+        if(boarding.seat==='driver'&&!vehicle.driverId){vehicle.driverId=player.id;player.vehicleSeat='driver';vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:-1});}
+        else if(boarding.seat==='passenger'&&(vehicle.passengerIds||[]).length<1){vehicle.passengerIds||=[];vehicle.passengerIds.push(player.id);player.vehicleSeat='passenger';}
         else return json(response,409,{error:'O veículo está cheio. Tente puxar o motorista para fora.'});
         if(player.vehicleSeat==='driver')vehicle.speed=0;player.vehicleId=vehicle.id;player.glockEquipped=false;player.glockAiming=false;
         const pose=player.vehicleSeat==='driver'?LowkeyWorld.driverPose(vehicle):LowkeyWorld.passengerPose(vehicle,0);player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.walking=false;player.jumping=false;player.speed=Math.abs(vehicle.speed);player.motionTime=now;player.motionReset=(player.motionReset||0)+1;
@@ -695,7 +750,7 @@ const server = createServer(async (request, response) => {
         if(Math.abs(vehicle.speed)>2.5)return json(response,409,{error:'Freie antes de sair.'});
         if(!LowkeyWorld.exitPosition(vehicle))return json(response,409,{error:'Sem espaço para sair. Afaste o veículo.'});
         releaseVehicle(player);client.motionAt=now;client.movementCredits=4;client.lastSampleAt=undefined;send(client.response,{type:'vehicle-exit',position:player.position});
-      } else if(data.action==='steal') {
+      } else if(action==='steal') {
         if(player.vehicleId)return json(response,409,{error:'Saia do veículo atual primeiro.'});
         const vehicle=vehicles.get(String(data.vehicleId||''));if(!vehicle)return json(response,404,{error:'Veículo não encontrado.'});
         const victim=players.get(vehicle.driverId),victimClient=clients.get(vehicle.driverId);
@@ -704,7 +759,7 @@ const server = createServer(async (request, response) => {
         if(Math.hypot(player.position.x-vehicle.x,player.position.z-vehicle.z)>3.55||Math.abs(player.position.y-vehicle.y)>1.5)return json(response,403,{error:'Chegue mais perto do motorista para puxá-lo.'});
         if(Math.abs(vehicle.speed)>10)return json(response,409,{error:'O veículo está rápido demais para roubar.'});
         const outside=LowkeyWorld.exitPosition(vehicle);if(!outside)return json(response,409,{error:'Não há espaço ao lado do veículo para puxar o motorista.'});
-        const hijack={thiefId:player.id,victimId:victim.id,startedAt:now,from:LowkeyWorld.driverPose(vehicle),thiefFrom:{...player.position},outside};vehicle.hijacking=hijack;vehicle.speed=0;vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:-1});client.hijackingVehicleId=vehicle.id;
+        vehicle.wheelieAngle=0;const hijack={thiefId:player.id,victimId:victim.id,startedAt:now,from:LowkeyWorld.driverPose(vehicle),thiefFrom:{...player.position},outside};vehicle.hijacking=hijack;vehicle.speed=0;vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:-1});client.hijackingVehicleId=vehicle.id;
         broadcast({type:'vehicle-hijack',vehicleId:vehicle.id,thiefId:player.id,victimId:victim.id,startedAt:now,duration:LowkeyWorld.HIJACK_MS});
         const timer=setTimeout(()=>{
           if(vehicle.hijacking!==hijack)return;
@@ -726,7 +781,7 @@ const server = createServer(async (request, response) => {
         if(!Number.isFinite(data.throttle)||!Number.isFinite(data.steer)||Math.abs(data.throttle)>1||Math.abs(data.steer)>1||!Number.isSafeInteger(data.sequence))return json(response,400,{error:'Comando de direção inválido.'});
         const previous=vehicleInputs.get(vehicle.id);
         if(data.sequence<=(previous?.sequence??-1)||now-(previous?.at??0)<25){response.writeHead(204);return response.end();}
-        vehicleInputs.set(vehicle.id,{throttle:data.throttle,steer:data.steer,brake:data.brake===true,at:now,sequence:data.sequence});
+        vehicleInputs.set(vehicle.id,{throttle:data.throttle,steer:data.steer,brake:data.brake===true,wheelie:data.wheelie===true,at:now,sequence:data.sequence});
         response.writeHead(204);return response.end();
       } else return json(response,400,{error:'Ação de veículo inválida.'});
       broadcast({type:'state',player});broadcast({type:'world-state',...worldSnapshot()});
@@ -943,6 +998,22 @@ const server = createServer(async (request, response) => {
       const now = Date.now();
       if (now - client.lastChatAt < 500) return json(response, 429, { error: 'Espera um pouquinho antes de mandar outra mensagem.' });
       client.lastChatAt = now;
+      if(text.startsWith('/')){
+        const [command,...args]=text.toLowerCase().split(/\s+/),reply=text=>send(client.response,{type:'system',text});
+        if(command==='/zombies'){
+          if(['stop','parar'].includes(args[0])){if(!isAdministrator(authenticatedAccount)&&zombiesGame.ownerId!==authenticatedAccount.id)return json(response,403,{error:'Só quem iniciou ou o administrador pode parar o modo.'});zombiesGame.stop();}
+          else if(!args[0]||['start','iniciar'].includes(args[0])){const result=zombiesGame.start(authenticatedAccount.id);if(!result.started)reply(`Zombies já está no ROUND ${result.state.round}.`);}
+          else return json(response,400,{error:'Use /zombies para começar ou /zombies stop para parar.'});
+        }else if(command==='/help'||command==='/ajuda')reply('Comandos: /zombies · /zombies stop'+(isAdministrator(authenticatedAccount)?' · /players · /kick usuario · /ban usuario · /unban usuario':''));
+        else if(['/players','/kick','/ban','/unban'].includes(command)){
+          if(!isAdministrator(authenticatedAccount))return json(response,403,{error:'Esse comando é só do administrador.'});
+          if(command==='/players')reply('Online: '+[...players.values()].map(p=>p.username).join(', '));
+          else{const account=await findAccountByUsername(normalizeUsername(args[0]));if(!account)return json(response,404,{error:'Usuário não encontrado.'});if(isAdministrator(account))return json(response,403,{error:'Esse comando não pode ser aplicado ao administrador.'});
+            if(command==='/kick'){securityCooldowns.set(account.id,Date.now()+30000);for(const[id,current]of clients)if(current.accountId===account.id)closeRoomClient(id,'Você foi removido da sala pelo administrador.');}
+            else await setAccountBanned(account,command==='/ban');reply(`${account.username}: ${command==='/kick'?'removido da sala':command==='/ban'?'banido':'banimento retirado'}.`);}
+        }else return json(response,400,{error:'Comando desconhecido. Digite /help.'});
+        response.writeHead(204);return response.end();
+      }
       broadcastWithinChatRadius({ type: 'chat', id: player.id, name: player.name, text, time: now }, player);
       response.writeHead(204);
       return response.end();
@@ -1043,18 +1114,18 @@ const server = createServer(async (request, response) => {
         const shotPitch = pitch + Math.sin(angle) * radius;
         const direction = { x: -Math.sin(shotYaw) * Math.cos(shotPitch), y: -Math.sin(shotPitch), z: Math.cos(shotYaw) * Math.cos(shotPitch) };
         const range = 70, end = { x: origin.x + direction.x * range, y: origin.y + direction.y * range, z: origin.z + direction.z * range };
-        let target = null, nearest = Infinity;
-        for (const candidate of players.values()) {
+        let target = null, nearest = zombiesGame.active?(LowkeyWorld.shotBlock(origin,end,[...vehicles.values()])??Infinity):Infinity;
+        for (const candidate of combatTargets(id)) {
           if (candidate.id === id || candidate.health <= 0 || candidate.position.y < -.2) continue;
           const hit = playerSegmentHit(origin, end, candidate.position, .34);
           if (hit !== null && hit < nearest) { target = candidate; nearest = hit; }
         }
-        let hitPoint = end, headshot = false, damage = 0;
+        let hitPoint = Number.isFinite(nearest)?{x:origin.x+(end.x-origin.x)*nearest,y:origin.y+(end.y-origin.y)*nearest,z:origin.z+(end.z-origin.z)*nearest}:end, headshot = false, damage = 0;
         if (target) {
           hitPoint = { x: origin.x + (end.x - origin.x) * nearest, y: origin.y + (end.y - origin.y) * nearest, z: origin.z + (end.z - origin.z) * nearest };
           headshot = hitPoint.y >= target.position.y + 1.63;
           damage = headshot ? 100 : 34;
-          target.health = Math.max(0, (target.health ?? 100) - damage);
+          if(target.enemy)zombiesGame.hurt(target.id,damage,id);else target.health = Math.max(0, (target.health ?? 100) - damage);
         }
         player.glockEquipped = true;
         send(client.response, { type: 'weapon-state', mag: weapon.mag, reserve: weapon.reserve, reloading: false });
@@ -1066,7 +1137,7 @@ const server = createServer(async (request, response) => {
           const targetClient = clients.get(target.id);
           if (targetClient && deadUntil) targetClient.deadUntil = deadUntil;
           if (targetClient) send(targetClient.response, { type: 'weapon-health', targetId: target.id, health: target.health, deadUntil, impulse: deadUntil ? null : { x: direction.x / impulseLength * .85, z: direction.z / impulseLength * .85 } });
-          if (deadUntil) broadcast({ type: 'glock-elimination', shooterId: id, targetId: target.id, headshot, time: now });
+          if (deadUntil&&!target.enemy) broadcast({ type: 'glock-elimination', shooterId: id, targetId: target.id, headshot, time: now });
         }
         response.writeHead(204);
         return response.end();
@@ -1086,8 +1157,8 @@ const server = createServer(async (request, response) => {
         const aim={x:Math.sin(facing)*Math.cos(pitch),y:-Math.sin(pitch),z:Math.cos(facing)*Math.cos(pitch)};
         const origin={x:player.position.x,y:player.position.y+1.42,z:player.position.z},reach=2.7;
         const end={x:origin.x+aim.x*reach,y:origin.y+aim.y*reach,z:origin.z+aim.z*reach};
-        let target=null,nearest=Infinity;
-        for(const candidate of players.values()){
+        let target=null,nearest=LowkeyWorld.shotBlock(origin,end,[...vehicles.values()])??Infinity;
+        for(const candidate of combatTargets(id)){
           if(candidate.id===id||candidate.health<=0||candidate.vehicleId)continue;
           const hit=playerSegmentHit(origin,end,candidate.position,.36);
           if(hit!==null&&hit<nearest){target=candidate;nearest=hit;}
@@ -1099,9 +1170,9 @@ const server = createServer(async (request, response) => {
           const dx=target.position.x-player.position.x,dz=target.position.z-player.position.z,length=Math.hypot(dx,dz);
           const force=player.speed>6.8?6.5:4.8;
           impulse={x:(length>.001?dx/length:aim.x)*force,y:3.2,z:(length>.001?dz/length:aim.z)*force};
-          damage=4;target.health=Math.max(0,target.health-damage);
+          damage=target.enemy?12:4;if(target.enemy)zombiesGame.hurt(target.id,damage,id,impulse);else target.health=Math.max(0,target.health-damage);
           const victim=clients.get(target.id),deadUntil=target.health<=0?now+2200:0;
-          if(victim){victim.movementCredits=Math.min(7,(victim.movementCredits||0)+2.5);if(deadUntil)victim.deadUntil=deadUntil;send(victim.response,{type:'weapon-health',targetId:target.id,health:target.health,deadUntil});}
+          if(victim){victim.externalImpulseUntil=now+1800;victim.movementCredits=Math.min(7,(victim.movementCredits||0)+2.5);if(deadUntil)victim.deadUntil=deadUntil;send(victim.response,{type:'weapon-health',targetId:target.id,health:target.health,deadUntil});}
           if(deadUntil)impulse=null;
         }
         broadcast({type:'combat-punch',id,swingId,targetId:target?.id||null,damage,health:target?.health,impulse,time:now});
@@ -1200,7 +1271,7 @@ setInterval(()=>{
   for(const vehicle of vehicles.values()) {
     if(!vehicle.driverId)continue;
     const player=players.get(vehicle.driverId),client=clients.get(vehicle.driverId);
-    if(!player||!client){vehicle.driverId=null;vehicle.speed=0;vehicleInputs.delete(vehicle.id);changed=true;continue;}
+    if(!player||!client){vehicle.driverId=null;vehicle.speed=0;vehicle.wheelieAngle=0;vehicleInputs.delete(vehicle.id);changed=true;continue;}
     if(client.deadUntil){releaseVehicle(player);send(client.response,{type:'vehicle-exit',position:player.position});changed=true;continue;}
     occupied=true;
     if(vehicle.hijacking){const pending=pendingHijacks.get(vehicle.id);if(!pending||!players.has(pending.thiefId)){cancelVehicleHijack(vehicle);changed=true;}}
@@ -1243,10 +1314,12 @@ setInterval(()=>{
   if(changed||(occupied&&now-lastVehicleBroadcast>=100)){lastVehicleBroadcast=now;broadcast({type:'world-state',...worldSnapshot()});}
 },50).unref();
 setInterval(()=>broadcast({type:'world-time',serverTime:Date.now(),segmentMs:LowkeyWorld.SEGMENT_MS}),30000).unref();
+setInterval(()=>zombiesGame.tick(),50).unref();
 
 setInterval(() => {
   for (const client of clients.values()) client.response.write(': keepalive\n\n');
   const cutoff = Date.now() - 15 * 60 * 1000;
+  gameGuard.sweep();
   for (const [key, cached] of sessionAccounts) if (cached.validUntil <= Date.now()) sessionAccounts.delete(key);
   for (const [key, attempts] of authRequests) if (!attempts.some(at => at > cutoff)) authRequests.delete(key);
   for (const [key, attempts] of failedLogins) if (!attempts.some(at => at > cutoff)) failedLogins.delete(key);
@@ -1261,8 +1334,8 @@ setInterval(() => {
     projectile.lastAt = now;
     const from = projectile.position, to = { x: from.x + projectile.velocity.x * dt, y: from.y + projectile.velocity.y * dt, z: from.z + projectile.velocity.z * dt };
     projectile.velocity.y -= 9.8 * dt;
-    let hit = null, bestDistance = Infinity;
-    for (const target of players.values()) {
+    let hit = null, bestDistance = LowkeyWorld.shotBlock(from,to,[...vehicles.values()])??Infinity;
+    for (const target of combatTargets(projectile.ownerId)) {
       if (target.id === projectile.ownerId || target.position.y < -.2) continue;
       const t=playerSegmentHit(from,to,target.position,.43);
       if(t!==null&&t<bestDistance){hit=target;bestDistance=t;}
@@ -1270,9 +1343,10 @@ setInterval(() => {
     projectile.position = to;
     if (hit) {
       const speed = 1.35, horizontalSpeed = Math.hypot(projectile.velocity.x, projectile.velocity.z) || 1;
+      if(hit.enemy)zombiesGame.hurt(hit.id,12,projectile.ownerId,{x:projectile.velocity.x/horizontalSpeed*3,z:projectile.velocity.z/horizontalSpeed*3});
       broadcast({ type: 'combat-impact', id: projectile.id, ownerId: projectile.ownerId, kind: projectile.kind, x: to.x, y: to.y, z: to.z, targetId: hit.id, impulse: { x: projectile.velocity.x / horizontalSpeed * speed, z: projectile.velocity.z / horizontalSpeed * speed }, time: now });
       projectiles.delete(projectileId);
-    } else if (to.y <= .12 || now - projectile.createdAt > 6000 || Math.abs(to.x) > 140 || Math.abs(to.z) > 140) {
+    } else if (Number.isFinite(bestDistance)||to.y <= (LowkeyWorld.groundHeight(to.x,to.z)??-.05) || now - projectile.createdAt > 6000 || Math.abs(to.x) > 140 || Math.abs(to.z) > 140) {
       broadcast({ type: 'combat-impact', id: projectile.id, ownerId: projectile.ownerId, kind: projectile.kind, x: to.x, y: Math.max(0, to.y), z: to.z, targetId: null, time: now });
       projectiles.delete(projectileId);
     }

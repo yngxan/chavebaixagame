@@ -14,6 +14,7 @@ test('punch PvP counts rapid clicks, resolves instantly, applies damage and knoc
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
   await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));
   await copyFile(new URL('../world-systems.js',import.meta.url),join(fixture,'world-systems.js'));
+  for(const file of ['zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   const base=`http://127.0.0.1:${port}`,streams=[];
   async function waitFor(predicate){const deadline=Date.now()+4000;while(Date.now()<deadline){const result=predicate();if(result)return result;await delay(10);}throw new Error('Timed out waiting for combat event');}

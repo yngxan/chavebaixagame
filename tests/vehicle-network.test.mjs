@@ -9,11 +9,11 @@ import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import '../world-systems.js';
 
-test('vehicles are shared, proximity-checked, server-driven and freed on disconnect', {timeout:30000}, async()=>{
+test('vehicles are shared, proximity-checked, server-driven and freed on disconnect', {timeout:45000}, async()=>{
   const fixture=await mkdtemp(join(tmpdir(),'lowkey-vehicle-test-'));
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
-  for(const file of ['server.mjs','world-systems.js'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+  for(const file of ['server.mjs','world-systems.js','zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   const base=`http://127.0.0.1:${port}`,streams=[];let logs='';child.stderr.on('data',chunk=>logs+=chunk);
   const post=(cookie,path,data)=>fetch(base+path,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify(data)});
@@ -46,17 +46,19 @@ test('vehicles are shared, proximity-checked, server-driven and freed on disconn
     await walk(owner,{x:-12,z:5});
     assert.equal((await post(owner.cookie,'/api/vehicle',{id:owner.id,action:'enter',vehicleId:carId})).status,200);
     await waitFor(()=>latest(observer)?.vehicles.find(vehicle=>vehicle.id===carId)?.driverId===owner.id);
-    await walk(observer,{x:-12,z:5});
-    assert.equal((await post(observer.cookie,'/api/vehicle',{id:observer.id,action:'enter',vehicleId:carId})).status,200);
+    await walk(observer,{x:-14.5,z:7});
+    assert.equal((await post(observer.cookie,'/api/vehicle',{id:observer.id,action:'interact',vehicleId:carId})).status,200);
     await waitFor(()=>latest(observer)?.vehicles.find(vehicle=>vehicle.id===carId)?.passengerIds?.includes(observer.id));
-    await walk(thief,{x:-12,z:5});
-    const quitter=await connect('vehicle_quitter');await walk(quitter,{x:-12,z:5});
-    assert.equal((await post(quitter.cookie,'/api/vehicle',{id:quitter.id,action:'steal',vehicleId:carId})).status,202);
+    await walk(thief,{x:-14.5,z:7});
+    assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'steal',vehicleId:carId})).status,409,'client cannot force a theft from the occupied passenger side');
+    await walk(thief,{x:-14.5,z:3});
+    const quitter=await connect('vehicle_quitter');await walk(quitter,{x:-14.5,z:3});
+    assert.equal((await post(quitter.cookie,'/api/vehicle',{id:quitter.id,action:'interact',vehicleId:carId})).status,202);
     quitter.abort.abort();
     const cancellation=await waitFor(()=>owner.events.find(event=>event.type==='vehicle-hijack-cancel'&&event.thiefId===quitter.id));
     assert.equal(cancellation.victimId,owner.id,'all clients can clear the interrupted victim animation');
     await waitFor(()=>{const car=latest(owner)?.vehicles.find(vehicle=>vehicle.id===carId);return car?.driverId===owner.id&&!car.hijacking;});
-    assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'steal',vehicleId:carId})).status,202,'nearby player starts a timed hijack');
+    assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'interact',vehicleId:carId})).status,202,'the same button starts a timed hijack from the driver side');
     const theft=await waitFor(()=>owner.events.find(event=>event.type==='vehicle-hijack'&&event.thiefId===thief.id));assert.equal(theft.duration,LowkeyWorld.HIJACK_MS);
     assert.equal((await post(thief.cookie,'/api/combat',{id:thief.id,action:'punch'})).status,409,'hands are occupied during the pulling animation');
     assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'enter',vehicleId:motoId})).status,409,'cannot board another vehicle during a hijack');
@@ -81,12 +83,17 @@ test('vehicles are shared, proximity-checked, server-driven and freed on disconn
     assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'exit'})).status,200);
     const exit=await waitFor(()=>thief.events.find(event=>event.type==='vehicle-exit'));
     thief.position=exit.position;assert.equal(exit.position.y,LowkeyWorld.groundHeight(exit.position.x,exit.position.z));
-    await walk(owner,{x:-13.5,z:10.5});
+    await walk(owner,{x:-11.8,z:8.8});
     assert.equal((await post(owner.cookie,'/api/vehicle',{id:owner.id,action:'enter',vehicleId:motoId})).status,200);
     await waitFor(()=>latest(observer)?.vehicles.find(vehicle=>vehicle.id===motoId)?.driverId===owner.id);
-    await walk(thief,{x:-13.5,z:10.5});
-    assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'enter',vehicleId:motoId})).status,200,'second player boards the motorcycle passenger seat');
+    await walk(thief,{x:-15,z:8.8});
+    assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'interact',vehicleId:motoId})).status,200,'approaching the rear boards the motorcycle passenger seat');
     await waitFor(()=>latest(thief)?.vehicles.find(vehicle=>vehicle.id===motoId)?.passengerIds?.includes(thief.id));
+    assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'input',sequence:1,throttle:1,steer:0,wheelie:true})).status,403,'passenger cannot control the wheelie');
+    for(let i=1;i<=9;i++){assert.equal((await post(owner.cookie,'/api/vehicle',{id:owner.id,action:'input',sequence:i,throttle:1,steer:0,wheelie:true})).status,204);await delay(70);}
+    await waitFor(()=>latest(observer)?.vehicles.find(vehicle=>vehicle.id===motoId)?.wheelieAngle>.2);
+    for(let i=10;i<=23;i++){await post(owner.cookie,'/api/vehicle',{id:owner.id,action:'input',sequence:i,throttle:0,steer:0,brake:true,wheelie:false});await delay(70);}
+    await waitFor(()=>latest(observer)?.vehicles.find(vehicle=>vehicle.id===motoId)?.wheelieAngle<.01);
     owner.abort.abort();
     await waitFor(()=>latest(observer)?.vehicles.find(vehicle=>vehicle.id===motoId)?.driverId===null);
     assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'exit'})).status,200,'passenger can exit after driver disconnects');
