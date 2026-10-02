@@ -9,6 +9,7 @@ import './city-layout.js';
 import './world-systems.js';
 import {createZombiesGame} from './zombies-server.mjs';
 import {createGameGuard} from './game-security.mjs';
+import {resolveWeaponAttack} from './weapons-server.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const INFINITE_GLOCK_AMMO = true;
@@ -139,6 +140,8 @@ const allowedFiles = new Map([
   ['/', 'index.html'],
   ['/index.html', 'index.html'],
   ['/three.min.js', 'three.min.js'],
+  ['/weapons.js', 'weapons.js'],
+  ['/weapon-wheel.js', 'weapon-wheel.js'],
   ['/stage-media.js', 'stage-media.js'],
   ['/motion-sync.js', 'motion-sync.js'],
   ['/world-systems.js', 'world-systems.js'],
@@ -670,7 +673,15 @@ const server = createServer(async (request, response) => {
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       const now = Date.now();
       if(client.hijackingVehicleId){response.writeHead(204);return response.end();}
-      if(player.vehicleId){response.writeHead(204);return response.end();}
+      if(player.vehicleId){
+        if(player.vehicleSeat==='passenger'&&now-client.lastStateAt>=50){
+          client.lastStateAt=now;player.glockYaw=Math.atan2(Math.sin(finite(data.glockYaw,player.rotation)),Math.cos(finite(data.glockYaw,player.rotation)));
+          player.glockPitch=Math.max(-1.45,Math.min(1.45,finite(data.glockPitch)));player.glockAiming=player.weaponId==='glock'&&data.glockAiming===true;
+          if(LowkeyCityLayout.inSafeZone(player.position)){player.weaponId='punch';player.glockEquipped=false;player.glockAiming=false;}
+          broadcast({type:'state',player});
+        }
+        response.writeHead(204);return response.end();
+      }
       if(player.ghost&&zombiesGame.active){
         const sequence=data.sequence;if(Number.isSafeInteger(sequence)&&sequence>=0&&sequence<=client.lastStateSequence){response.writeHead(204);return response.end();}
         if(now-client.lastStateAt<24){response.writeHead(204);return response.end();}
@@ -732,7 +743,9 @@ const server = createServer(async (request, response) => {
       player.walking = horizontalDistance > .025;
       player.swimming = LowkeyWorld.isSwimming(nextPosition,now);player.jumping = !player.swimming && data.jumping === true;
       player.voiceEnabled = hasSfuConfig() ? Boolean(client.voiceReady && client.voicePublishSessionId) : Boolean(data.voiceEnabled);
-      player.glockEquipped = !LowkeyCityLayout.inSafeZone(nextPosition)&&Boolean(data.glockEquipped);
+      if(LowkeyCityLayout.inSafeZone(nextPosition)){player.weaponId='punch';player.glockEquipped=false;}
+      else if(data.weaponId!==undefined)player.glockEquipped=Boolean(player.weaponId&&player.weaponId!=='punch');
+      else{player.glockEquipped=Boolean(data.glockEquipped);player.weaponId=player.glockEquipped?'glock':'punch';}
       player.glockPitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.glockPitch)));
       player.glockAiming = player.glockEquipped && data.glockAiming === true;
       const profileChanged = JSON.stringify([player.name, player.appearance]) !== oldProfile;
@@ -779,7 +792,7 @@ const server = createServer(async (request, response) => {
         if(boarding.seat==='driver'&&!vehicle.driverId){vehicle.driverId=player.id;player.vehicleSeat='driver';vehicleInputs.set(vehicle.id,{throttle:0,steer:0,brake:true,at:now,sequence:-1});}
         else if(boarding.seat==='passenger'&&(vehicle.passengerIds||[]).length<1){vehicle.passengerIds||=[];vehicle.passengerIds.push(player.id);player.vehicleSeat='passenger';}
         else return json(response,409,{error:'O veículo está cheio. Tente puxar o motorista para fora.'});
-        if(player.vehicleSeat==='driver')vehicle.speed=0;player.vehicleId=vehicle.id;player.glockEquipped=false;player.glockAiming=false;
+        if(player.vehicleSeat==='driver')vehicle.speed=0;player.vehicleId=vehicle.id;player.weaponId='punch';player.glockEquipped=false;player.glockAiming=false;
         const pose=player.vehicleSeat==='driver'?LowkeyWorld.driverPose(vehicle):LowkeyWorld.passengerPose(vehicle,0);player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.walking=false;player.jumping=false;player.speed=Math.abs(vehicle.speed);player.motionTime=now;player.motionReset=(player.motionReset||0)+1;
       } else if(data.action==='exit') {
         const vehicle=vehicles.get(player.vehicleId);if(!vehicle||vehicle.driverId!==player.id&&!(vehicle.passengerIds||[]).includes(player.id))return json(response,409,{error:'Você não está em um veículo.'});
@@ -1099,6 +1112,20 @@ const server = createServer(async (request, response) => {
     }
   }
 
+  if(request.method==='POST'&&url.pathname==='/api/weapon'){
+    try{
+      const data=await readJson(request,1024),id=String(data.id||''),client=clients.get(id),player=players.get(id),weaponId=String(data.weaponId||'');
+      if(!client||!player||client.accountId!==authenticatedAccount.id)return json(response,401,{error:'Jogador não conectado nesta conta.'});
+      if(!Object.hasOwn(LowkeyWeapons.definitions,weaponId))return json(response,400,{error:'Arma inválida.'});
+      if(weaponId!=='punch'&&(client.deadUntil||player.ghost||(player.vehicleId&&(player.vehicleSeat!=='passenger'||weaponId!=='glock'))||client.hijackingVehicleId||LowkeyCityLayout.inSafeZone(player.position)))return json(response,409,{error:'Carona pode usar apenas Glock, fora da área segura.'});
+      const now=Date.now();client.weaponSwitchTimes=(client.weaponSwitchTimes||[]).filter(at=>now-at<1000);
+      if(client.weaponSwitchTimes.length>=12)return json(response,429,{error:'Espere um instante para trocar de arma.'});
+      client.weaponSwitchTimes.push(now);if(player.weaponId!==weaponId)client.weaponReadyAt=now+160;
+      player.weaponId=weaponId;player.glockEquipped=weaponId!=='punch';player.glockAiming=false;client.weapon.burst=0;
+      broadcast({type:'state',player});return json(response,200,{weaponId});
+    }catch(error){return json(response,error.statusCode||400,{error:error.message});}
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/reload') {
     try {
       const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id);
@@ -1129,74 +1156,32 @@ const server = createServer(async (request, response) => {
     try {
       const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id), action = String(data.action || '');
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
-      if (player.vehicleId) return json(response, 409, { error: 'Saia do veículo para atacar.' });
+      if (player.vehicleId&&(player.vehicleSeat!=='passenger'||action!=='glock')) return json(response, 409, { error: 'Somente o carona pode disparar a Glock.' });
       if(client.hijackingVehicleId)return json(response,409,{error:'Aguarde o roubo terminar.'});
       if (client.deadUntil||player.ghost) return json(response, 409, { error: 'Espectadores não podem atacar.' });
       if(LowkeyCityLayout.inSafeZone(player.position))return json(response,409,{error:'Armas e ataques ficam bloqueados na área segura.'});
-      if (action === 'glock') {
-        if (player.vehicleId) return json(response, 409, { error: 'Saia do veículo para atacar.' });
-        const weapon = client.weapon, now = Date.now();
-        if (weapon.reloadingUntil > now) return json(response, 409, { error: 'A Glock está recarregando.' });
-        if (!INFINITE_GLOCK_AMMO && weapon.mag <= 0) return json(response, 409, { error: 'Pente vazio · aperte R para recarregar.' });
-        if (now - weapon.lastShotAt < 138) return json(response, 429, { error: 'A Glock é semiautomática · toque de novo.' });
-        const facing = Math.atan2(Math.sin(finite(data.facing, player.rotation)), Math.cos(finite(data.facing, player.rotation)));
-        const firstPerson = data.firstPerson === true;
-        const cameraYaw = Math.atan2(Math.sin(finite(data.cameraYaw, -facing)), Math.cos(finite(data.cameraYaw, -facing)));
-        let pitch = Math.max(-Math.PI / 2 + .04, Math.min(Math.PI / 2 - .04, finite(data.pitch)));
-        const snapshot=data.shotPosition;let shotPosition=player.position;
-        if(snapshot&&[snapshot.x,snapshot.y,snapshot.z].every(Number.isFinite)&&Math.hypot(snapshot.x-player.position.x,snapshot.y-player.position.y,snapshot.z-player.position.z)<=1.8)shotPosition=snapshot;
-        const supplied = data.launchOrigin;
-        let origin = null;
-        if (supplied && Number.isFinite(Number(supplied.x)) && Number.isFinite(Number(supplied.y)) && Number.isFinite(Number(supplied.z))) {
-          const candidate = { x: Number(supplied.x), y: Number(supplied.y), z: Number(supplied.z) };
-          if (Math.hypot(candidate.x - shotPosition.x, candidate.z - shotPosition.z) <= 1.5 && candidate.y - shotPosition.y >= .2 && candidate.y - shotPosition.y <= 2.8) origin = candidate;
-        }
-        let yaw = cameraYaw;
-        if (!origin) origin = { x: shotPosition.x + Math.sin(facing) * .38, y: shotPosition.y + 1.43, z: shotPosition.z + Math.cos(facing) * .38 };
-        const aimPoint=data.aimPoint;
-        if(aimPoint&&[aimPoint.x,aimPoint.y,aimPoint.z].every(Number.isFinite)){
-          const dx=aimPoint.x-origin.x,dy=aimPoint.y-origin.y,dz=aimPoint.z-origin.z,length=Math.hypot(dx,dy,dz);
-          if(length>.1&&length<=90){yaw=Math.atan2(-dx,dz);pitch=Math.atan2(-dy,Math.hypot(dx,dz));}
-        }
-        const burst = now - weapon.lastBurstAt < 410 ? Math.min(weapon.burst + 1, 8) : 1;
-        weapon.burst = burst;
-        weapon.lastBurstAt = now;
-        weapon.lastShotAt = now;
-        if (!INFINITE_GLOCK_AMMO) weapon.mag -= 1;
-        const spread = (.0015 + burst * .0017 + (player.speed > 5.2 ? .009 : player.speed > 2 ? .0035 : 0) + (player.position.y > .16 ? .013 : 0)) * (data.aiming === true ? .72 : 1);
-        const angle = Math.random() * Math.PI * 2, radius = Math.sqrt(Math.random()) * spread;
-        const shotYaw = yaw + Math.cos(angle) * radius;
-        const shotPitch = pitch + Math.sin(angle) * radius;
-        const direction = { x: -Math.sin(shotYaw) * Math.cos(shotPitch), y: -Math.sin(shotPitch), z: Math.cos(shotYaw) * Math.cos(shotPitch) };
-        const range = 70, end = { x: origin.x + direction.x * range, y: origin.y + direction.y * range, z: origin.z + direction.z * range };
-        let target = null, nearest = zombiesGame.active?(LowkeyWorld.shotBlock(origin,end,[...vehicles.values()])??Infinity):Infinity;
-        for (const candidate of combatTargets(id)) {
-          if (candidate.id === id || candidate.health <= 0 || LowkeyCityLayout.inSafeZone(candidate.position) || (candidate.position.y < -.2 && !candidate.swimming)) continue;
-          const hit = playerSegmentHit(origin, end, candidate.position, .34);
-          if (hit !== null && hit < nearest) { target = candidate; nearest = hit; }
-        }
-        let hitPoint = Number.isFinite(nearest)?{x:origin.x+(end.x-origin.x)*nearest,y:origin.y+(end.y-origin.y)*nearest,z:origin.z+(end.z-origin.z)*nearest}:end, headshot = false, damage = 0;
-        if (target) {
-          hitPoint = { x: origin.x + (end.x - origin.x) * nearest, y: origin.y + (end.y - origin.y) * nearest, z: origin.z + (end.z - origin.z) * nearest };
-          headshot = hitPoint.y >= target.position.y + 1.63;
-          damage = headshot ? 100 : 34;
-          if(target.enemy)zombiesGame.hurt(target.id,damage,id);else target.health = Math.max(0, (target.health ?? 100) - damage);
-        }
-        player.glockEquipped = true;
-        send(client.response, { type: 'weapon-state', mag: weapon.mag, reserve: weapon.reserve, reloading: false });
-        player.rotation=facing;player.glockPitch=finite(data.pitch);player.glockAiming=data.aiming===true;
-        broadcast({ type: 'glock-shot', shooterId: id, facing, pitch:player.glockPitch, firstPerson, start: origin, end: hitPoint, hit: Boolean(target), targetId: target?.id || null, headshot, time: now });
-        if (target) {
-          const impulseLength = Math.hypot(direction.x, direction.z) || 1;
-          const deadUntil = target.health <= 0 ? now + 10000 : 0;
+      if (LowkeyWeapons.firearm(action)||action==='knife') {
+        const def=LowkeyWeapons.get(action),weapon=client.weapon,now=Date.now();
+        if((action!=='glock'||data.weaponId!==undefined)&&player.weaponId!==action)return json(response,409,{error:'Equipe esta arma antes de atacar.'});
+        if(now<(client.weaponReadyAt||0))return json(response,429,{error:'A arma ainda está sendo equipada.'});
+        if(weapon.reloadingUntil>now)return json(response,409,{error:'A arma está recarregando.'});
+        if(now-weapon.lastShotAt<def.interval)return json(response,429,{error:'Aguarde o próximo disparo.'});
+        weapon.burst=now-weapon.lastBurstAt<410?Math.min(weapon.burst+1,8):1;weapon.lastBurstAt=now;weapon.lastShotAt=now;
+        const result=resolveWeaponAttack({weaponId:action,data:{...data,burst:weapon.burst},player,targets:combatTargets(id),segmentHit:playerSegmentHit,block:(from,to)=>LowkeyWorld.shotBlock(from,to,[...vehicles.values()].filter(vehicle=>vehicle.id!==player.vehicleId))});
+        player.weaponId=action;player.glockEquipped=true;player.glockYaw=result.facing;if(!player.vehicleId)player.rotation=result.facing;player.glockPitch=finite(data.pitch);player.glockAiming=LowkeyWeapons.firearm(action)&&data.aiming===true;
+        for(const hit of result.hits){
+          const {target,damage,headshot,direction}=hit;
+          if(target.enemy){zombiesGame.hurt(target.id,damage,id);continue;}
+          target.health=Math.max(0,(target.health??100)-damage);
+          const deadUntil=target.health<=0?now+10000:0,targetClient=clients.get(target.id),impulseLength=Math.hypot(direction.x,direction.z)||1;
           if(deadUntil)leaveCorpse(target,now);
-          const targetClient = clients.get(target.id);
-          if (targetClient && deadUntil) targetClient.deadUntil = deadUntil;
-          if (targetClient) send(targetClient.response, { type: 'weapon-health', targetId: target.id, health: target.health, deadUntil, impulse: deadUntil ? null : { x: direction.x / impulseLength * .85, z: direction.z / impulseLength * .85 } });
-          if (deadUntil&&!target.enemy) broadcast({ type: 'glock-elimination', shooterId: id, targetId: target.id, headshot, time: now });
+          if(targetClient){if(deadUntil)targetClient.deadUntil=deadUntil;send(targetClient.response,{type:'weapon-health',targetId:target.id,health:target.health,deadUntil,impulse:deadUntil?null:{x:direction.x/impulseLength*.85,z:direction.z/impulseLength*.85}});}
+          if(deadUntil)broadcast({type:'glock-elimination',shooterId:id,targetId:target.id,headshot,time:now});
         }
-        response.writeHead(204);
-        return response.end();
+        const firstHit=result.hits[0],firstShot=result.shots[0];
+        send(client.response,{type:'weapon-state',mag:def.magazine||0,reserve:120,reloading:false,weaponId:action});
+        broadcast({type:action==='knife'?'weapon-melee':'glock-shot',weaponId:action,shooterId:id,facing:result.facing,pitch:player.glockPitch,firstPerson:data.firstPerson===true,start:result.origin,end:firstShot.end,pellets:result.shots,hit:result.hits.length>0,targetId:firstHit?.target.id||null,headshot:result.hits.some(hit=>hit.headshot),hits:result.hits.map(hit=>({targetId:hit.target.id,damage:hit.damage,headshot:hit.headshot})),time:now});
+        response.writeHead(204);return response.end();
       }
       if (!['punch', 'snowball'].includes(action)) return json(response, 400, { error: 'Ação inválida.' });
       if(action==='punch'){
