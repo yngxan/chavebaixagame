@@ -40,7 +40,9 @@ const vehicles = new Map(LowkeyWorld.initialVehicles().map(vehicle=>[vehicle.id,
 const vehicleInputs = new Map();
 const pendingHijacks=new Map();
 const corpses=new Map();
-const worldSnapshot = () => ({serverTime:Date.now(),segmentMs:LowkeyWorld.SEGMENT_MS,vehicles:[...vehicles.values()],corpses:[...corpses.values()].filter(c=>c.expiresAt>Date.now())});
+const rideSeats=new Map();
+const worldSnapshot = () => ({serverTime:Date.now(),segmentMs:LowkeyWorld.SEGMENT_MS,rides:[...rideSeats.values()],vehicles:[...vehicles.values()],corpses:[...corpses.values()].filter(c=>c.expiresAt>Date.now())});
+function releaseRide(player){if(!player||!rideSeats.has(player.id))return;const seat=rideSeats.get(player.id),station=LowkeyRides.stations[seat.kind];rideSeats.delete(player.id);player.rideId=null;player.position={x:station.x+(seat.seat===0?-.8:.8),y:station.y,z:station.z};player.motionReset=(player.motionReset||0)+1;const client=clients.get(player.id);if(client){client.motionAt=Date.now();client.movementCredits=4;client.lastSampleAt=undefined;send(client.response,{type:'movement-correction',position:player.position});}broadcast({type:'state',player});broadcast({type:'world-state',...worldSnapshot()});}
 function leaveCorpse(player,now){
   if(!player||player.enemy)return;
   const corpse={id:player.id+'-'+now,playerId:player.id,name:player.name,appearance:player.appearance,position:{...player.position},rotation:player.rotation,expiresAt:now+10000};
@@ -48,6 +50,7 @@ function leaveCorpse(player,now){
   if(corpses.size>=48)corpses.delete(corpses.keys().next().value);
   corpses.set(corpse.id,corpse);broadcast({type:'player-death',corpse});
 }
+function plazaSpawn(player){const index=Math.max(0,[...players.keys()].indexOf(player.id)),angle=index*2.399,radius=2.8+Math.floor(index/10)*.5;return{x:Math.cos(angle)*radius,y:0,z:5+Math.sin(angle)*radius};}
 function respawnPlayer(player,client,now){
   client.deadUntil=0;player.position={...client.respawnPosition};player.position.y=LowkeyWorld.groundHeight(player.position.x,player.position.z)??0;
   player.health=100;player.ghost=false;player.walking=false;player.jumping=false;player.speed=0;player.motionTime=now;player.motionReset=(player.motionReset||0)+1;
@@ -57,6 +60,7 @@ function respawnPlayer(player,client,now){
 }
 function cancelVehicleHijack(vehicle){const pending=pendingHijacks.get(vehicle?.id);if(!pending)return;clearTimeout(pending.timer);pendingHijacks.delete(vehicle.id);vehicle.hijacking=null;const thief=clients.get(pending.thiefId);if(thief)thief.hijackingVehicleId=null;const thiefPlayer=players.get(pending.thiefId);if(thiefPlayer&&!thiefPlayer.vehicleId){thiefPlayer.position={...pending.outside};thiefPlayer.motionReset=(thiefPlayer.motionReset||0)+1;if(thief){thief.movementCredits=4;thief.motionAt=Date.now();thief.lastSampleAt=undefined;}broadcast({type:'state',player:thiefPlayer});}const victim=players.get(pending.victimId);if(victim?.vehicleId===vehicle.id){const pose=LowkeyWorld.driverPose(vehicle);victim.position={x:pose.x,y:pose.y,z:pose.z};victim.motionTime=Date.now();broadcast({type:'state',player:victim});}broadcast({type:'vehicle-hijack-cancel',vehicleId:vehicle.id,thiefId:pending.thiefId,victimId:pending.victimId,thiefPosition:thiefPlayer?.position});}
 function releaseVehicle(player) {
+  releaseRide(player);
   const vehicle=vehicles.get(player?.vehicleId);
   if(!vehicle)return;
   const driver=vehicle.driverId===player.id,seat=(vehicle.passengerIds||[]).indexOf(player.id);
@@ -179,7 +183,8 @@ const allowedFiles = new Map([
 
 const send = (response, message) => response.write(`data: ${JSON.stringify(message)}\n\n`);
 function broadcast(message, exceptId = null) {
-  for (const [id, client] of clients) if (id !== exceptId) send(client.response, message);
+  const packet=`data: ${JSON.stringify(message)}\n\n`;
+  for (const [id, client] of clients) if (id !== exceptId) client.response.write(packet);
 }
 function broadcastWithinChatRadius(message, origin) {
   for (const [id, client] of clients) {
@@ -701,6 +706,7 @@ const server = createServer(async (request, response) => {
       const now = Date.now();
       if(policeGame.isJailed(player)){response.writeHead(204);return response.end();}
       if(client.hijackingVehicleId){response.writeHead(204);return response.end();}
+      if(rideSeats.has(player.id)){response.writeHead(204);return response.end();}
       if(player.vehicleId){
         if(player.vehicleSeat==='passenger'&&now-client.lastStateAt>=50){
           client.lastStateAt=now;player.glockYaw=Math.atan2(Math.sin(finite(data.glockYaw,player.rotation)),Math.cos(finite(data.glockYaw,player.rotation)));
@@ -789,10 +795,28 @@ const server = createServer(async (request, response) => {
     }
   }
 
+  if(request.method==='POST'&&url.pathname==='/api/ride'){
+    try{
+      const data=await readJson(request,1024),player=players.get(String(data.id||'')),client=clients.get(String(data.id||'')),now=Date.now();
+      if(!player||!client||client.accountId!==authenticatedAccount.id)return json(response,401,{error:'Jogador não conectado nesta conta.'});
+      if(now-(client.lastRideAt||0)<350)return json(response,429,{error:'Aguarde um instante.'});client.lastRideAt=now;
+      if(client.deadUntil||player.health<=0||player.ghost||policeGame.isJailed(player)||client.hijackingVehicleId||zombiesGame.active)return json(response,409,{error:'Não é possível embarcar agora.'});
+      const active=rideSeats.get(player.id);
+      if(active){const phase=LowkeyRides.phase(active.kind,now);if(!phase.boarding||active.kind==='wheel'&&phase.bench!==active.bench)return json(response,409,{error:'Aguarde seu banco voltar à estação para sair.'});releaseRide(player);response.writeHead(204);return response.end();}
+      if(data.action!=='enter')return json(response,400,{error:'Ação inválida.'});
+      const station=LowkeyRides.stations[data.kind];if(!station)return json(response,400,{error:'Brinquedo inválido.'});
+      if(player.vehicleId||Math.hypot(player.position.x-station.x,player.position.z-station.z)>4||Math.abs(player.position.y-station.y)>2)return json(response,409,{error:'Vá à entrada do brinquedo, a pé.'});
+      const phase=LowkeyRides.phase(data.kind,now);if(!phase.boarding)return json(response,409,{error:'Espere o brinquedo parar para embarcar.'});
+      let available;for(let bench=0;bench<station.benches&&!available;bench++){if(data.kind==='wheel'&&bench!==phase.bench)continue;for(let seat=0;seat<2;seat++)if(![...rideSeats.values()].some(s=>s.kind===data.kind&&s.bench===bench&&s.seat===seat)){available={id:player.id,kind:data.kind,bench,seat};break;}}
+      if(!available)return json(response,409,{error:'Banco lotado: são duas pessoas por banco.'});
+      rideSeats.set(player.id,available);player.rideId=available.kind;player.weaponId='punch';player.glockEquipped=false;player.glockAiming=false;delete player.emote;const pose=LowkeyRides.seat(available.kind,available.bench,available.seat,now);player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.walking=false;player.jumping=false;player.speed=0;player.motionReset=(player.motionReset||0)+1;broadcast({type:'state',player});broadcast({type:'world-state',...worldSnapshot()});response.writeHead(204);return response.end();
+    }catch(error){return json(response,error.statusCode||400,{error:error.message});}
+  }
   if (request.method === 'POST' && url.pathname === '/api/vehicle') {
     try {
       const data=await readJson(request,2048),player=players.get(String(data.id||'')),client=clients.get(String(data.id||'')),now=Date.now();
       if(!player||!client||client.accountId!==authenticatedAccount.id)return json(response,401,{error:'Jogador não conectado.'});
+      if(rideSeats.has(player.id))return json(response,409,{error:'Saia do brinquedo primeiro.'});
       if(policeGame.isJailed(player))return json(response,409,{error:'Aguarde terminar o tempo na cela.'});
       if(client.deadUntil||player.ghost)return json(response,409,{error:'Espectadores não podem usar veículos.'});
       let action=data.action,boarding=null;
@@ -1080,7 +1104,30 @@ const server = createServer(async (request, response) => {
       client.lastChatAt = now;
       if(text.startsWith('/')){
         const [command,...args]=text.toLowerCase().split(/\s+/),reply=text=>send(client.response,{type:'system',text});
-        if(command==='/zombies'){
+        if(command==='/resetcops'||command==='/resetgame'){
+          if(!isAdministrator(authenticatedAccount))return json(response,403,{error:'Esse comando é só para admins.'});
+          if(now-(client.lastResetAt||0)<5000)return json(response,429,{error:'Espere 5 segundos entre reinícios.'});
+          client.lastResetAt=now;
+          if(command==='/resetgame'){
+            zombiesGame.stop();
+            for(const vehicle of vehicles.values())cancelVehicleHijack(vehicle);
+            for(const p of players.values()){releaseVehicle(p);p.vehicleId=null;p.vehicleSeat=null;p.weaponId='punch';p.glockEquipped=false;p.glockAiming=false;delete p.emote;}
+            vehicleInputs.clear();vehicles.clear();for(const v of LowkeyWorld.initialVehicles())vehicles.set(v.id,v);
+            corpses.clear();projectiles.clear();broadcast({type:'room-reset',serverTime:now});
+          }
+          policeGame.reset();
+          if(command==='/resetgame'){
+            for(const p of players.values()){const c=clients.get(p.id);if(c){c.combatToken=null;c.externalImpulseUntil=0;c.weapon={mag:20,reserve:120,reloadingUntil:0,lastShotAt:-Infinity,lastBurstAt:-Infinity,burst:0};c.respawnPosition=plazaSpawn(p);respawnPlayer(p,c,now);}}
+            broadcast({type:'world-state',...worldSnapshot()});
+          }
+          broadcast({type:'system',text:command==='/resetcops'?'POLÍCIA REINICIADA · PATRULHAS E PERSEGUIÇÕES RESTAURADAS':'SALA REINICIADA · TODOS DE VOLTA À PRAÇA'});
+        }else if(command==='/spawn'){
+          if(zombiesGame.active||policeGame.isJailed(player)||(policeGame.snapshot().wanted.find(p=>p.id===player.id)?.stars||0)>0)return json(response,409,{error:'Não é possível usar /spawn durante Zombies, prisão ou perseguição.'});
+          if(player.health<=0||player.ghost||client.deadUntil)return json(response,409,{error:'Espere renascer para usar /spawn.'});
+          if(now-(client.lastSpawnAt||0)<15000||now-client.lastCombatAt<10000)return json(response,429,{error:'Aguarde 15 segundos entre retornos e saia do combate.'});
+          client.lastSpawnAt=now;if(client.hijackingVehicleId)cancelVehicleHijack(vehicles.get(client.hijackingVehicleId));releaseVehicle(player);
+          client.respawnPosition=plazaSpawn(player);respawnPlayer(player,client,now);send(client.response,{type:'vehicle-exit',position:player.position});broadcast({type:'world-state',...worldSnapshot()});reply('Você voltou à praça.');
+        }else if(command==='/zombies'){
           if(['stop','parar'].includes(args[0])){if(!isAdministrator(authenticatedAccount)&&zombiesGame.ownerId!==authenticatedAccount.id)return json(response,403,{error:'Só quem iniciou ou o administrador pode parar o modo.'});zombiesGame.stop();}
           else if(!args[0]||['start','iniciar'].includes(args[0])){const result=zombiesGame.start(authenticatedAccount.id);if(!result.started)reply(`Zombies já está no ROUND ${result.state.round}.`);}
           else return json(response,400,{error:'Use /zombies para começar ou /zombies stop para parar.'});
@@ -1100,7 +1147,7 @@ const server = createServer(async (request, response) => {
           const vehicle={...LowkeyWorld.initialVehicles().find(v=>v.kind===(command==='/carro'?'car':'moto')),id:'admin-'+randomUUID(),color,rotation:player.rotation,garageBay:null};let position=null;
           for(let i=0;i<16;i++){const angle=player.rotation+(i%2?1:-1)*Math.ceil(i/2)*Math.PI/8,x=player.position.x+Math.sin(angle)*5,z=player.position.z+Math.cos(angle)*5;if(LowkeyWorld.vehicleClearAt(vehicle,x,z,vehicle.rotation,LowkeyWorld.vehicleObstacles(vehicle,[...vehicles.values()]))&&[...players.values()].every(p=>Math.hypot(p.position.x-x,p.position.z-z)>2.7)){position={x,y:LowkeyWorld.groundHeight(x,z),z};break;}}
           if(!position)return json(response,409,{error:'Sem espaço. Vá para uma rua livre.'});Object.assign(vehicle,position);vehicles.set(vehicle.id,vehicle);broadcast({type:'world-state',...worldSnapshot()});reply(`${command==='/carro'?'Carro':'Moto'} criado${name?' na cor '+name:' com cor aleatória'}.`);
-        }else if(command==='/help'||command==='/ajuda')reply('Comandos: /zombies · /zombies stop'+(isAdministrator(authenticatedAccount)?' · /carro [cor] · /moto [cor] · /adm usuario · /players · /kick usuario · /ban usuario · /unban usuario':''));
+        }else if(command==='/help'||command==='/ajuda')reply('Comandos: /spawn · /zombies · /zombies stop'+(isAdministrator(authenticatedAccount)?' · /resetcops · /resetgame · /carro [cor] · /moto [cor] · /adm usuario · /players · /kick usuario · /ban usuario · /unban usuario':''));
         else if(['/players','/kick','/ban','/unban'].includes(command)){
           if(!isAdministrator(authenticatedAccount))return json(response,403,{error:'Esse comando é só do administrador.'});
           if(command==='/players')reply('Online: '+[...players.values()].map(p=>p.username).join(', '));
@@ -1128,7 +1175,7 @@ const server = createServer(async (request, response) => {
       const allowedEmotes = new Set(['wave', 'dance', 'clap', 'heart', 'smoke']);
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (!allowedEmotes.has(emote)) return json(response, 400, { error: 'Emote inválido.' });
-      if (player.vehicleId) return json(response, 409, { error: 'Saia do veículo para usar emotes.' });
+      if (player.vehicleId||rideSeats.has(player.id)) return json(response, 409, { error: 'Saia do veículo ou brinquedo para usar emotes.' });
       if(client.hijackingVehicleId)return json(response,409,{error:'Aguarde o roubo terminar.'});
       const now = Date.now();
       if (now - client.lastEmoteAt < 650) return json(response, 429, { error: 'Espera um instante antes de outro emote.' });
@@ -1147,6 +1194,7 @@ const server = createServer(async (request, response) => {
       const data=await readJson(request,1024),id=String(data.id||''),client=clients.get(id),player=players.get(id),weaponId=String(data.weaponId||'');
       if(!client||!player||client.accountId!==authenticatedAccount.id)return json(response,401,{error:'Jogador não conectado nesta conta.'});
       if(!Object.hasOwn(LowkeyWeapons.definitions,weaponId))return json(response,400,{error:'Arma inválida.'});
+      if(weaponId!=='punch'&&rideSeats.has(player.id))return json(response,409,{error:'Armas bloqueadas no brinquedo.'});
       if(policeGame.isJailed(player))return json(response,409,{error:'Armas bloqueadas na cela.'});
       if(weaponId!=='punch'&&(client.deadUntil||player.ghost||(player.vehicleId&&(player.vehicleSeat!=='passenger'||weaponId!=='glock'))||client.hijackingVehicleId||LowkeyCityLayout.inSafeZone(player.position)))return json(response,409,{error:'Carona pode usar apenas Glock, fora da área segura.'});
       const now=Date.now();client.weaponSwitchTimes=(client.weaponSwitchTimes||[]).filter(at=>now-at<1000);
@@ -1188,6 +1236,7 @@ const server = createServer(async (request, response) => {
       const data = await readJson(request, 1024), id = String(data.id || ''), client = clients.get(id), player = players.get(id), action = String(data.action || '');
       if (!client || !player || client.accountId !== authenticatedAccount.id) return json(response, 401, { error: 'Jogador não conectado nesta conta.' });
       if (player.vehicleId&&(player.vehicleSeat!=='passenger'||action!=='glock')) return json(response, 409, { error: 'Somente o carona pode disparar a Glock.' });
+      if(rideSeats.has(player.id))return json(response,409,{error:'Ataques bloqueados no brinquedo.'});
       if(policeGame.isJailed(player))return json(response,409,{error:'Ataques bloqueados na cela.'});
       if(client.hijackingVehicleId)return json(response,409,{error:'Aguarde o roubo terminar.'});
       if (client.deadUntil||player.ghost) return json(response, 409, { error: 'Espectadores não podem atacar.' });
@@ -1402,6 +1451,7 @@ setInterval(()=>{
 setInterval(()=>broadcast({type:'world-time',serverTime:Date.now(),segmentMs:LowkeyWorld.SEGMENT_MS}),30000).unref();
 setInterval(()=>zombiesGame.tick(),50).unref();
 setInterval(()=>policeGame.tick(),50).unref();
+setInterval(()=>{const now=Date.now();for(const seat of rideSeats.values()){const player=players.get(seat.id);if(!player){rideSeats.delete(seat.id);continue;}if(player.health<=0||player.ghost||zombiesGame.active){releaseRide(player);continue;}const pose=LowkeyRides.seat(seat.kind,seat.bench,seat.seat,now);player.position={x:pose.x,y:pose.y,z:pose.z};player.rotation=pose.rotation;player.motionTime=now;}},50).unref();
 
 setInterval(() => {
   for (const client of clients.values()) client.response.write(': keepalive\n\n');

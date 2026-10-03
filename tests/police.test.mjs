@@ -5,6 +5,17 @@ import '../world-systems.js';
 import {createPoliceGame} from '../police-server.mjs';
 function fixture(){let now=100000,paused=false;const players=new Map(),events=[],arrests=[],releases=[];const game=createPoliceGame({world:LowkeyWorld,layout:LowkeyCityLayout,players,broadcast:e=>events.push(e),clock:()=>now,paused:()=>paused,arrest:(...args)=>arrests.push(args),release:(...args)=>releases.push(args)});return{game,players,events,arrests,releases,step(n=1){for(let i=0;i<n;i++){now+=50;game.tick();}},pause(v){paused=v;}};}
 
+test('police reset clears pursuit and restores one bounded set of crews',()=>{
+  const f=fixture(),p={id:'reset',accountId:'reset',health:100,position:{x:160,y:3.2,z:310}};f.players.set(p.id,p);f.game.crime(p,20);f.step(1000);assert.ok(f.game.cars.length>2);
+  for(let i=0;i<5;i++){f.game.reset();assert.equal(f.game.cars.length,2);assert.equal(f.game.officers.size,6);assert.equal(f.game.snapshot().wanted[0].stars,0);assert.ok([...f.game.officers.values()].every(o=>o.health===100));assert.equal(new Set(f.game.cars.flatMap(c=>c.officerIds)).size,4);f.step(2);}
+  assert.ok(f.events.some(e=>e.type==='police-state'&&e.reset));
+});
+
+test('extra patrols return to the station and retire after the city is no longer wanted',()=>{
+  const f=fixture();for(let i=0;i<3;i++){const p={id:'idle'+i,accountId:'idle'+i,health:100,position:{x:(i-1)*100,y:3.2,z:310}};f.players.set(p.id,p);f.game.crime(p,20);}f.step(1200);assert.equal(f.game.cars.length,6);
+  f.players.clear();f.step(3600);assert.equal(f.game.cars.length,2,'only the two normal patrols remain');assert.ok(f.game.officers.size<=6,'off-duty reinforcements cannot accumulate forever');
+});
+
 test('reinforcement officers leave the real station, board their cars and resume patrol after the suspect leaves',()=>{
   const f=fixture(),p={id:'dispatch',accountId:'dispatch',health:100,position:{x:160,y:3.2,z:310}};f.players.set(p.id,p);f.game.crime(p,10);
   let departure=false;

@@ -297,4 +297,14 @@
     return {...position,rotation:face+turn*enter,scale:1+(seat.scale-1)*enter,progress,pull:smooth((progress-.32)/.38),enter};
   }
   globalThis.LowkeyWorld={MAP_HALF_SIZE,city,SEGMENT_MS,HIJACK_MS,daylight,groundHeight,supportHeight,waterHeight,waterAt,isSwimming,advanceSwimmer,keepCameraAboveGround,constrainCamera,shotBlock,crossesSolid,initialVehicles,garageVehicle,replenishGarage,expireUnoccupiedVehicles,vehicleClearAt,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose,isWatercraft,passengerCapacity,marinaVehicle,replenishMarina};
+  // One deterministic timeline and arc-length table for server, seats and scenery.
+  const wrap=n=>((n%1)+1)%1,curve=city.coast.trackPoint,arc=[0];let previous=curve(0);
+  for(let i=1;i<=200;i++){const p=curve(i/200);arc.push(arc[i-1]+Math.hypot(...p.map((v,a)=>v-previous[a])));previous=p;}
+  function trackParameter(t){const length=wrap(t)*arc[200];let low=0,high=200;while(low+1<high){const mid=(low+high)>>1;if(arc[mid]<length)low=mid;else high=mid;}return(low+(length-arc[low])/(arc[high]-arc[low]||1))/200;}
+  function trackPose(t){const u=trackParameter(t),p=curve(u),a=curve(wrap(u-.0001)),b=curve(wrap(u+.0001)),d=b.map((v,i)=>v-a[i]);return{x:p[0],y:p[1],z:p[2],rotation:Math.atan2(d[0],d[2]),pitch:-Math.atan2(d[1],Math.hypot(d[0],d[2]))};}
+  function ridePhase(kind,time){if(kind==='wheel'){const step=Math.floor(time/16000),elapsed=(time%16000+16000)%16000;return{boarding:elapsed<5000,bench:((12-step)%16+16)%16,angle:(step+Math.max(0,elapsed-5000)/11000)*Math.PI/8,remaining:Math.ceil((16000-elapsed)/1000)};}const elapsed=(time%60000+60000)%60000;return{boarding:elapsed<10000,t:Math.max(0,elapsed-10000)/50000,remaining:Math.ceil((60000-elapsed)/1000)};}
+  function rideBench(kind,index,time){if(kind==='wheel'){const w=city.coast.wheel,angle=index*Math.PI/8+ridePhase(kind,time).angle;return{x:w.x+Math.cos(angle)*w.radius,y:w.hubY-1.3+Math.sin(angle)*w.radius,z:w.z,rotation:0,pitch:0};}return trackPose(ridePhase(kind,time).t-index*.027);}
+  function rideSeat(kind,bench,seat,time){const p=rideBench(kind,bench,time),side=seat===0?-.46:.46;return{...p,x:p.x+Math.cos(p.rotation)*side,y:p.y+(kind==='wheel'?-.92:.65),z:p.z-Math.sin(p.rotation)*side,scale:.65};}
+  const rideStations={wheel:{x:-18,y:1.4,z:226.2,name:'RODA-GIGANTE',benches:16},coaster:{x:5,y:3.35,z:207.5,name:'MONTANHA-RUSSA',benches:3}};
+  globalThis.LowkeyRides={phase:ridePhase,bench:rideBench,seat:rideSeat,stations:rideStations};
 })();

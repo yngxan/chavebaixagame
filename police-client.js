@@ -6,6 +6,30 @@
     const paint=new THREE.MeshStandardMaterial({color:0xf0eee7,roughness:.55}),dark=new THREE.MeshStandardMaterial({color:0x182432,roughness:.8}),glass=new THREE.MeshStandardMaterial({color:0x76a8be,transparent:true,opacity:.32,roughness:.25,depthWrite:false});
     const blue=new THREE.MeshStandardMaterial({color:0x396cff,emissive:0x2458ff,emissiveIntensity:1}),red=new THREE.MeshStandardMaterial({color:0xff4141,emissive:0xff1010,emissiveIntensity:1});
     const boxGeo=new THREE.BoxGeometry(1,1,1),wheelGeo=new THREE.CylinderGeometry(.41,.41,.28,12);
+    function batchOfficer(rig){
+      const protectedParts=new Set(rig.arms.flatMap(a=>[...(a.userData.handParts||[]),a.userData.fist,a.userData.snowball])),sources=new THREE.Group();sources.visible=false;rig.batchSources=sources;
+      // Merge fixed meshes inside each animated bone, keeping the exact surfaces.
+      // Originals remain owned for cleanup, outside the per-frame scene traversal.
+      const parents=[rig.head,rig.body,...rig.legs,...rig.arms,...rig.arms.map(a=>a.userData.forearm).filter(Boolean)],boundaries=new Set([...parents,...rig.arms.map(a=>a.userData.glock).filter(Boolean),sources]);
+      for(const parent of parents){
+        parent.updateWorldMatrix(true,true);const inverse=new THREE.Matrix4().copy(parent.matrixWorld).invert(),groups=new Map();
+        function collect(node){for(const mesh of [...node.children]){
+          if(!mesh.visible||boundaries.has(mesh)||protectedParts.has(mesh))continue;
+          if(!mesh.isMesh){collect(mesh);continue;}
+          if(mesh.isInstancedMesh||Array.isArray(mesh.material)||mesh.material.transparent)continue;
+          const key=mesh.material.uuid+':'+mesh.castShadow+':'+mesh.receiveShadow,list=groups.get(key)||[];list.push({mesh,matrix:new THREE.Matrix4().multiplyMatrices(inverse,mesh.matrixWorld)});groups.set(key,list);
+        }}collect(parent);
+        for(const pieces of groups.values()){
+          if(pieces.length<2)continue;const transformed=pieces.map(({mesh,matrix})=>{const copy=mesh.geometry.clone().applyMatrix4(matrix);if(!copy.attributes.normal)copy.computeVertexNormals();if(!copy.index)return copy;const flat=copy.toNonIndexed();copy.dispose();return flat;}),geometry=new THREE.BufferGeometry();
+          for(const [name,size] of [['position',3],['normal',3],['uv',2]]){
+            const total=transformed.reduce((n,g)=>n+g.attributes.position.count,0),values=new Float32Array(total*size);let offset=0;
+            for(const g of transformed){const attr=g.attributes[name];for(let i=0;i<g.attributes.position.count;i++)for(let j=0;j<size;j++)values[offset++]=attr?attr.array[i*attr.itemSize+j]:0;}
+            geometry.setAttribute(name,new THREE.BufferAttribute(values,size));
+          }
+          transformed.forEach(g=>g.dispose());geometry.computeBoundingSphere();const merged=new THREE.Mesh(geometry,pieces[0].mesh.material);merged.castShadow=pieces[0].mesh.castShadow;merged.receiveShadow=pieces[0].mesh.receiveShadow;parent.add(merged);for(const {mesh} of pieces)sources.add(mesh);
+        }
+      }
+    }
     function part(group,x,y,z,sx,sy,sz,mat){const mesh=new THREE.Mesh(boxGeo,mat);mesh.position.set(x,y,z);mesh.scale.set(sx,sy,sz);mesh.castShadow=true;mesh.receiveShadow=true;group.add(mesh);return mesh;}
     function carModel(state){const group=new THREE.Group();scene.add(group);const wheels=[];
       part(group,0,.55,0,1.82,.28,3.55,dark);part(group,0,.82,0,1.79,.32,3.5,paint);
@@ -30,10 +54,11 @@
       if(!['police-state','police-motion'].includes(message.type))return false;
       if(message.type==='police-motion'){message={...message,cars:message.cars.map(([id,x,y,z,rotation,speed,lights])=>({...models.get(id)?.state,id,x,y,z,rotation,speed,lights})),officers:message.officers.map(([id,x,y,z,rotation,walking,seated,health,armed,aiming,aimPitch])=>({...rigs.get(id)?.state,id,position:{x,y,z},rotation,walking,seated,health,armed,aiming,aimPitch}))};}
       const now=performance.now();clockOffset=message.serverTime-Date.now();const me=(message.wanted||[]).find(p=>p.id===getLocalId());stars=me?.stars||0;jailUntil=me?.jailUntil||0;
+      if(message.reset){for(const model of models.values())model.samples.length=0;for(const rig of rigs.values())rig.samples.length=0;}
       for(const state of message.cars){let model=models.get(state.id);if(!model){model=carModel(state);models.set(state.id,model);}sample(model,state,state,now);}
       for(const [id,model] of models)if(!message.cars.some(c=>c.id===id)){scene.remove(model.group);for(const batch of model.batches)batch.dispose();for(const owned of model.owned)owned.dispose();model.group.traverse(o=>{if(o.geometry?.type==='PlaneGeometry')o.geometry.dispose();});models.delete(id);}
-      for(const state of message.officers){let rig=rigs.get(state.id);if(!rig){rig={...makeAvatar(state.appearance,'POLICIAL'),samples:[]};rig.group.traverse(o=>{if(o.isSprite)o.visible=false;});const cap=new THREE.Mesh(new THREE.BoxGeometry(.96,.13,.74),dark);cap.position.set(0,2.53,0);rig.head.add(cap);rig.policeParts=[cap,part(rig.head,0,2.46,.41,.77,.04,.28,dark),part(rig.body,-.27,1.58,.37,.1,.15,.025,paint)];rigs.set(state.id,rig);}sample(rig,state,state.position,now);}
-      for(const [id,rig] of rigs)if(!message.officers.some(o=>o.id===id)){scene.remove(rig.group);for(const p of rig.policeParts){p.parent.remove(p);if(p.geometry!==boxGeo)p.geometry.dispose();}disposeAvatar(rig.group);rigs.delete(id);}return true;
+      for(const state of message.officers){let rig=rigs.get(state.id);if(!rig){rig={...makeAvatar(state.appearance,'POLICIAL'),samples:[]};batchOfficer(rig);rig.group.traverse(o=>{if(o.isSprite)o.visible=false;});const cap=new THREE.Mesh(new THREE.BoxGeometry(.96,.13,.74),dark);cap.position.set(0,2.53,0);rig.head.add(cap);rig.policeParts=[cap,part(rig.head,0,2.46,.41,.77,.04,.28,dark),part(rig.body,-.27,1.58,.37,.1,.15,.025,paint)];rigs.set(state.id,rig);}sample(rig,state,state.position,now);}
+      for(const [id,rig] of rigs)if(!message.officers.some(o=>o.id===id)){scene.remove(rig.group);for(const p of rig.policeParts){p.parent.remove(p);if(p.geometry!==boxGeo)p.geometry.dispose();}rig.group.add(rig.batchSources);disposeAvatar(rig.group);rigs.delete(id);}return true;
     }
     function update(dt,now){for(const model of models.values()){pose(model,now);model.wheels.forEach(w=>w.rotation.x+=(model.state.speed||0)*dt/.41);model.lights.forEach((light,i)=>light.visible=model.state.lights&&(Math.floor(now/140)%2===i));}
       for(const rig of rigs.values()){pose(rig,now);const s=rig.state;rig.group.scale.setScalar(s.seated?.68:1);if(s.health<=0){rig.group.rotation.z=Math.PI/2;rig.group.position.y+=.3;}else rig.group.rotation.z=0;

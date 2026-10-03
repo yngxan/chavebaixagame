@@ -63,6 +63,14 @@ A delegacia fica a oeste da praça, em **x -46 / z -18**, substituindo o primeir
 
 Na recuperação das patrulhas, policiais renascem em posições livres e usam pontos de ronda separados. Ao passar pela porta, deixam imediatamente a etapa de saída, sem formar fila num único ponto externo. Viaturas que saíram da rota procuram um caminho de volta à rua respeitando árvores e prédios, com busca limitada e espaçada para não pesar em cada atualização.
 
+A polícia verifica colisores próximos, distribui buscas de caminhos entre atualizações e reutiliza verificações de obstáculos por intervalos curtos. As posições continuam chegando dez vezes por segundo, com precisão milimétrica. As partes fixas dos policiais são desenhadas em conjuntos por material dentro de cada articulação; a geometria e as animações são preservadas, e armas/acessórios que os NPCs não usam não são criados.
+
+Após 30 segundos sem procurados, as equipes extras voltam à delegacia e são retiradas; a cidade mantém duas viaturas de patrulha sem acumular reforços indefinidamente.
+
+A roda-gigante e a montanha-russa aceitam dois jogadores por banco (16 cabines na roda; três bancos no trem). Aproxime-se da placa de entrada e use **E** ou **EMBARCAR** no celular. Só é possível embarcar/desembarcar com o banco parado na estação; a roda espera cinco segundos em cada parada, e o trem dez segundos entre voltas de cinquenta segundos. O servidor reserva os assentos e controla o percurso; os clientes desenham os passageiros e os brinquedos com o mesmo relógio, sem enviar posição de cada cabine a cada quadro. Desconexão, morte e reinício liberam a vaga. Armas e emotes ficam bloqueados durante o passeio.
+
+Comandos: `/spawn` leva qualquer jogador vivo de volta à praça (intervalo de 15 segundos, bloqueado em combate, perseguição, prisão e Zombies). Administradores podem usar `/resetcops` para restaurar duas viaturas, seis policiais e limpar perseguições/prisões, ou `/resetgame` para parar Zombies, remover veículos extras, restaurar o estoque e levar os jogadores à praça. Contas, aparência e administradores salvos são mantidos. Há cinco segundos entre reinícios.
+
 ## Mapa da cidade
 
 - **M** no PC ou o botão **MAPA** no celular abre o mapa, com posição e direção do jogador, ruas, praça safe, delegacia, garagem, boutiques, praia, píer e marina.

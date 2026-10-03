@@ -1,0 +1,18 @@
+const assert=require('node:assert/strict');
+const {chromium}=require('C:/Users/Usuário/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+(async()=>{
+ const browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true,args:['--enable-webgl','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+ try{for(const mobile of [false,true]){
+  const context=await browser.newContext({viewport:mobile?{width:390,height:844}:{width:900,height:620},isMobile:mobile,hasTouch:mobile}),page=await context.newPage(),errors=[];page.on('pageerror',e=>{errors.push(e.message);console.log('PAGE ERROR: '+e.stack);});
+  await page.route('http://localhost:4213/',async route=>{const response=await route.fetch();let body=await response.text();body=body.replace('const vehicleObstacles=[];','window.__rideTest={THREE,coastController,get avatar(){return avatar;},environment,updateRemote,renderer,camera,getId:()=>localId};const vehicleObstacles=[];');await route.fulfill({response,body});});
+  await page.route('**/api/state',route=>route.fulfill({status:204}));
+  const registration=await context.request.post('http://localhost:4213/api/auth/register',{data:{username:'ride_'+Date.now().toString(36),password:'Synthetic-test-123'}});assert.equal(registration.status(),201);
+  await page.goto('http://localhost:4213/');await page.locator('#startButton').click();await page.waitForFunction(()=>window.__rideTest?.getId());
+  await page.evaluate(()=>{const b=window.__rideTest;b.environment.serverNow=()=>0;b.coastController.receiveRides({rides:[{id:b.getId(),kind:'wheel',bench:12,seat:0},{id:'rider-two',kind:'wheel',bench:12,seat:1}]});b.coastController.receiveRides=()=>{};b.updateRemote({id:'rider-two',name:'RIDER TWO',position:{x:-18,y:2,z:223},appearance:{skin:'#d3ac87',hair:'#292725',hairStyle:'fade',shirt:'#263f64',pants:'#172a42',shoe:'#121821'},health:100});});
+  await page.waitForFunction(()=>document.body.classList.contains('riding')&&window.__rideTest.avatar.scale.x===.65).catch(async e=>{console.log(await page.evaluate(()=>({riding:document.body.classList.contains('riding'),scale:window.__rideTest.avatar.scale.x,seats:[...window.__rideTest.coastController.rideSeats.values()]})));throw e;});await page.evaluate(()=>document.exitPointerLock?.());
+  const result=await page.evaluate(()=>{const b=window.__rideTest,s=b.coastController.riderPose(b.getId(),0);return{position:b.avatar.position.toArray(),seat:[s.x,s.y,s.z],scale:b.avatar.scale.x,button:[...document.querySelectorAll('button')].find(e=>e.textContent.includes('SAIR DO BRINQUEDO'))?.getBoundingClientRect().toJSON(),draws:b.renderer.info.render.calls};});assert.equal(result.scale,.65);assert.ok(Math.hypot(...result.position.map((v,i)=>v-result.seat[i]))<.001);assert.ok(result.button&&result.button.width>0);assert.deepEqual(errors,[]);
+  if(!mobile)await page.screenshot({path:'C:/Users/Usuário/Documents/Codex/2026-09-21/proc/outputs/lowkey-social-mvp/tests/rides-preview.png'});
+  await page.evaluate(()=>{const b=window.__rideTest;const seats=b.coastController.rideSeats;seats.get(b.getId()).kind='coaster';seats.get(b.getId()).bench=0;seats.get('rider-two').kind='coaster';seats.get('rider-two').bench=0;b.environment.serverNow=()=>22000;});await page.waitForFunction(()=>{const b=window.__rideTest,s=b.coastController.riderPose(b.getId(),22000);return Math.hypot(b.avatar.position.x-s.x,b.avatar.position.y-s.y,b.avatar.position.z-s.z)<.001;});assert.deepEqual(errors,[]);
+  console.log(JSON.stringify({mobile,...result,errors}));await context.close();
+ }}finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

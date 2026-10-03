@@ -109,6 +109,8 @@
     const t=(i+.5)/12;coast.obstacles.push({x:-18+side*9*(1-t),z:223+depth*(1-t*.5),hx:.62,hz:.31,minY:1.4+i/12*18.8,maxY:1.4+(i+1)/12*18.8,kind:'wheel-support'});
   }
   coast.trackPoints=[[5,4.5,212],[6,6,226],[17,13,228],[27,8,223],[26,4.5,211],[16,3.5,209]];
+  coast.surfaces.push({x:7,z:209,hx:4.5,hz:3,y:3.35,kind:'ride-station',ground:true});
+  for(let i=0;i<5;i++)coast.surfaces.push({x:5,z:203+i*.6,hx:2,hz:.3,y:1.4+(i+1)*.39,kind:'ride-step',ground:true});
   coast.trackPoint=t=>{const p=t*coast.trackPoints.length,i=Math.floor(p),u=p-i,n=coast.trackPoints.length;return [0,1,2].map(axis=>{const a=coast.trackPoints[(i+n-1)%n][axis],b=coast.trackPoints[i%n][axis],c=coast.trackPoints[(i+1)%n][axis],d=coast.trackPoints[(i+2)%n][axis];return .5*((2*b)+(-a+c)*u+(2*a-5*b+4*c-d)*u*u+(-a+3*b-3*c+d)*u*u*u);});};
   coast.trackSupports=Array.from({length:14},(_,i)=>coast.trackPoint(i/14));
   for(const [x,y,z] of coast.trackSupports)coast.obstacles.push({x,z,r:.19,minY:1.4,maxY:y-.2,kind:'coaster-support'});

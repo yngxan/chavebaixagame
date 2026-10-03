@@ -1,6 +1,9 @@
 (() => {
   function create({THREE,scene,signMaterial}){
     const layout=LowkeyCityLayout.coast,group=new THREE.Group();group.name='LowKey Beach & Pier';scene.add(group);
+    const rideSeats=new Map();
+    function receiveRides(message){if(!Array.isArray(message.rides))return;rideSeats.clear();for(const seat of message.rides)rideSeats.set(seat.id,seat);}
+    function riderPose(id,time){const s=rideSeats.get(id);return s?LowkeyRides.seat(s.kind,s.bench,s.seat,time):null;}
     const boxGeo=new THREE.BoxGeometry(1,1,1),poleGeo=new THREE.CylinderGeometry(1,1,1,8),batches=new Map(),materials=new Map();
     const material=(color)=>{if(!materials.has(color))materials.set(color,new THREE.MeshStandardMaterial({color,roughness:.8,flatShading:true}));return materials.get(color);};
     const sand=material(0xe9cf98),wetSand=material(0xc4b587),wood=material(0xb37d4d),woodLight=material(0xd0a572),darkWood=material(0x624830),white=material(0xf6f0db),teal=material(0x3daab2),red=material(0xe45252),yellow=material(0xf8c94b),purple=material(0x9369c5),steel=material(0xabbfc8),dark=material(0x263c48),pavement=material(0xd9d2bb),leaf=material(0x4e9d48),leafLight=material(0x81b443),lampMat=material(0xffd9a0);
@@ -53,7 +56,7 @@
     lampMat.emissive.set(0xffbf65);
     function part(mat,x,y,z,sx,sy,sz,geo=boxGeo,q=null,cast=true){const key=`${mat.uuid}:${geo.uuid}:${cast}`,batch=batches.get(key)||{mat,geo,cast,items:[]};batch.items.push({x,y,z,sx,sy,sz,q});batches.set(key,batch);}
     function beam(a,b,width,mat,depth=width){const start=new THREE.Vector3(...a),end=new THREE.Vector3(...b),delta=end.clone().sub(start),middle=start.clone().add(end).multiplyScalar(.5),q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),delta.clone().normalize());part(mat,middle.x,middle.y,middle.z,width,delta.length(),depth,boxGeo,q);}
-    for(const s of layout.surfaces){const board=s.kind==='pier'||s.kind==='ramp'||s.kind==='access'||s.kind==='dock';part(s.kind==='sand'?sand:s.kind==='promenade'?pavement:wood,s.x,s.y-(board?.17:.30),s.z,s.hx*2,board?.34:.60,s.hz*2,boxGeo,null,false);
+    for(const s of layout.surfaces){const board=s.kind==='pier'||s.kind==='ramp'||s.kind==='access'||s.kind==='dock'||s.kind.startsWith('ride-');part(s.kind==='sand'?sand:s.kind==='promenade'?pavement:wood,s.x,s.y-(board?.17:.30),s.z,s.hx*2,board?.34:.60,s.hz*2,boxGeo,null,false);
       if(board)for(let z=s.z-s.hz+.3;z<s.z+s.hz;z+=.65)part(darkWood,s.x,s.y+.001,z,s.hx*2,.005,.035,boxGeo,null,false);
     }
     part(wetSand,0,-.052,180.8,240,.012,2.4,boxGeo,null,false);
@@ -100,8 +103,8 @@
       sign(k.name,k.x,4.72,k.z+2.36,k.width-.8,.7);
     }
     // Ferris wheel: one rotating rig; cabins counter-rotate to stay upright.
-    const wheel=layout.wheel,wheelRig=new THREE.Group();wheelRig.position.set(wheel.x,wheel.hubY,wheel.z);group.add(wheelRig);
-    for(const side of [-1,1])for(const depth of [-3,3])beam([wheel.x+side*9,1.4,wheel.z+depth],[wheel.x,wheel.hubY,wheel.z+depth*.5],.45,white);
+    const wheel=layout.wheel,wheelRig=new THREE.Group();wheelRig.position.set(wheel.x,wheel.hubY-1.3,wheel.z);group.add(wheelRig);
+    for(const side of [-1,1])for(const depth of [-3,3])beam([wheel.x+side*9,1.4,wheel.z+depth],[wheel.x,wheel.hubY-1.3,wheel.z+depth*.5],.45,white);
     const ringGeo=new THREE.TorusGeometry(wheel.radius,.20,8,72),spokeGeo=new THREE.CylinderGeometry(.07,.07,wheel.radius,6),cabins=[];
     for(const depth of [-1.5,1.5]){const rim=new THREE.Mesh(ringGeo,yellow);rim.position.z=depth;rim.castShadow=true;wheelRig.add(rim);
       for(let i=0;i<16;i++){const angle=i*Math.PI/8,spoke=new THREE.Mesh(spokeGeo,white);spoke.position.set(Math.cos(angle)*wheel.radius/2,Math.sin(angle)*wheel.radius/2,depth);spoke.rotation.z=angle-Math.PI/2;wheelRig.add(spoke);}
@@ -109,7 +112,7 @@
     const hub=new THREE.Mesh(new THREE.CylinderGeometry(.7,.7,4,12),teal);hub.rotation.x=Math.PI/2;wheelRig.add(hub);
     function mesh(parent,mat,x,y,z,sx,sy,sz){const m=new THREE.Mesh(boxGeo,mat);m.position.set(x,y,z);m.scale.set(sx,sy,sz);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m;}
     for(let i=0;i<16;i++){const angle=i*Math.PI/8,pivot=new THREE.Group(),cabin=new THREE.Group();pivot.position.set(Math.cos(angle)*wheel.radius,Math.sin(angle)*wheel.radius,0);wheelRig.add(pivot);pivot.add(cabin);const color=[red,yellow,teal,purple][i%4];
-      mesh(cabin,color,0,-1.0,0,2.1,.95,2.8);mesh(cabin,color,0,.2,0,2.35,.16,3);for(const x of [-.95,.95])for(const z of [-1.2,1.2])mesh(cabin,white,x,-.35,z,.1,1.1,.1);cabins.push(cabin);
+      mesh(cabin,color,0,-1.35,0,2.3,.3,2.8);mesh(cabin,color,0,1.6,0,2.5,.16,3);for(const x of [-1.1,1.1])for(const z of [-1.2,1.2])mesh(cabin,white,x,.12,z,.1,2.95,.1);mesh(cabin,dark,0,-.55,-.55,2,.13,.9);mesh(cabin,color,0,-.18,-1,2,.75,.15);cabins.push(cabin);
     }
     const bulbs=[];
     const bulbGeo=new THREE.SphereGeometry(.16,6,4),bulbMat=new THREE.MeshBasicMaterial({color:0xffe492});
@@ -121,7 +124,8 @@
     for(let i=0;i<72;i++){const t=i/72,p=track.getPointAt(t),d=track.getTangentAt(t),n=new THREE.Vector3(d.z,0,-d.x).normalize();beam([p.x-n.x*.9,p.y-.17,p.z-n.z*.9],[p.x+n.x*.9,p.y-.17,p.z+n.z*.9],.12,teal);}
     for(const [x,y,z] of layout.trackSupports)beam([x,1.4,z],[x,y-.2,z],.26,purple);
     const train=[];
-    for(let i=0;i<3;i++){const car=new THREE.Group();mesh(car,i%2?teal:red,0,.48,0,1.35,.75,1.9);mesh(car,dark,0,.92,-.24,1.1,.1,1.2);mesh(car,yellow,0,1.08,.63,1.35,.1,.1);group.add(car);train.push(car);}
+    for(let i=0;i<3;i++){const car=new THREE.Group();mesh(car,i%2?teal:red,0,.48,0,2.2,.75,1.9);mesh(car,dark,0,.92,-.24,1.95,.1,1.2);mesh(car,dark,0,1.25,-.72,1.95,.7,.13);mesh(car,yellow,0,1.22,.63,2.2,.1,.1);group.add(car);train.push(car);}
+    for(const s of Object.values(LowkeyRides.stations)){part(teal,s.x-4.2,s.y+.9,s.z,.16,1.8,.16);sign(s.name+' · 2 POR BANCO',s.x-4.2,s.y+1.8,s.z,4.4,.65);}
     for(const l of layout.lamps){part(teal,l.x,l.y+2.15,l.z,.12,4.3,.12);part(white,l.x,l.y+4.38,l.z,.75,.18,.75);part(lampMat,l.x,l.y+4.19,l.z,.55,.25,.55);}
     // Warm festoon lights across the park.
     for(const z of [204,244]){for(const x of [-35,35])part(teal,x,4.2,z,.16,5.6,.16);beam([-35,7,z],[35,7,z],.035,dark);for(let x=-32;x<=32;x+=4)part(lampMat,x,6.72,z,.14,.24,.14,poleGeo,null,false);}
@@ -162,14 +166,14 @@
     const lights=Array.from({length:3},()=>{const l=new THREE.PointLight(0xffcd88,0,20,2);group.add(l);return l;});let lastSelect=-Infinity,selected=[];
     function update(night,position,now,serverTime=now){
       const time=serverTime/1000;water.material.uniforms.time.value=time%10000;water.material.uniforms.night.value=night;
-      wheelRig.rotation.z=(time*.085)%(Math.PI*2);for(const cabin of cabins)cabin.rotation.z=-wheelRig.rotation.z;
-      for(let i=0;i<train.length;i++){const t=(time*.036-i*.027)%1,p=track.getPointAt((t+1)%1),d=track.getTangentAt((t+1)%1);train[i].position.copy(p);train[i].lookAt(p.clone().add(d));}
+      wheelRig.rotation.z=LowkeyRides.phase('wheel',serverTime).angle;for(const cabin of cabins)cabin.rotation.z=-wheelRig.rotation.z;
+      for(let i=0;i<train.length;i++){const p=LowkeyRides.bench('coaster',i,serverTime);train[i].position.set(p.x,p.y,p.z);train[i].rotation.set(p.pitch,p.rotation,0,'YXZ');}
       lampMat.emissiveIntensity=.05+night*1.9;bulbMat.color.setRGB(1,.8+.12*(1-night),.42+.22*(1-night));
       surf.forEach((foam,i)=>{const phase=(time*.13+i*.25)%1;foam.position.z=182+phase*7;foam.position.y=layout.waterY+.14+Math.sin(time*.7+i)*.035;foam.material.opacity=Math.sin(phase*Math.PI)*(.24+.12*(1-night));});
       if(now-lastSelect>350){lastSelect=now;selected=layout.lamps.map(p=>({...p,distance:Math.hypot(p.x-position.x,p.z-position.z)})).filter(p=>p.distance<25).sort((a,b)=>a.distance-b.distance).slice(0,3);}
       lights.forEach((l,i)=>{const p=selected[i];l.intensity=p?night*12:0;if(p)l.position.set(p.x,p.y+4,p.z);});
     }
-    return{group,water,update,updateTracks,traces,wheelRig,cabins,train,track,lights,instanceCount,batchCount:batches.size};
+    return{group,water,update,updateTracks,traces,wheelRig,cabins,train,track,lights,instanceCount,batchCount:batches.size,rideSeats,receiveRides,riderPose};
   }
   globalThis.LowkeyCoast={create};
 })();

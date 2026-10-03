@@ -61,10 +61,10 @@ test('rides, kiosks and guardrails block entry while the park path stays open',(
 
 test('coast renders bounded detail batches; animation stays upright, finite and server-clock synchronized',async()=>{
   const sandbox=vm.createContext({console:{warn(){},log(){}}});
-  for(const file of ['three.min.js','city-layout.js','coast-client.js'])vm.runInContext(await readFile(new URL('../'+file,import.meta.url),'utf8'),sandbox);
+  for(const file of ['three.min.js','city-layout.js','world-systems.js','coast-client.js'])vm.runInContext(await readFile(new URL('../'+file,import.meta.url),'utf8'),sandbox);
   const THREE=sandbox.THREE,controller=sandbox.LowkeyCoast.create({THREE,scene:new THREE.Scene(),signMaterial:()=>new THREE.MeshBasicMaterial()});
   assert.ok(controller.instanceCount>500);assert.ok(controller.batchCount<60);assert.equal(controller.cabins.length,16);assert.equal(controller.lights.length,3);
-  const time=1770000123456;controller.update(0,{x:0,z:224},1000,time);assert.ok(Math.abs(controller.wheelRig.rotation.z+controller.cabins[0].rotation.z)<1e-8);
+  const time=1770000132456;controller.update(0,{x:0,z:224},1000,time);assert.ok(Math.abs(controller.wheelRig.rotation.z+controller.cabins[0].rotation.z)<1e-8);
   const previous=controller.train[0].position.clone();controller.update(1,{x:0,z:235},1400,time+500);assert.ok(previous.distanceTo(controller.train[0].position)>.1);assert.ok(controller.lights.some(l=>l.intensity>0));
   const angle=controller.wheelRig.rotation.z;controller.update(1,{x:0,z:235},2000,time+500);assert.equal(controller.wheelRig.rotation.z,angle,'render clock alone does not desynchronize rides');
   for(const car of controller.train)assert.ok([...car.position.toArray(),...car.quaternion.toArray()].every(Number.isFinite));
