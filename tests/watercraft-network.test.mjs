@@ -20,6 +20,10 @@ test('real multiplayer watercraft enforce seats, driver controls, painting, repl
     for(const p of [jetDriver,jetRider])assert.equal((await post(p,'/api/vehicle',{action:'interact',vehicleId:'marina-jetski'})).status,200);
     assert.equal((await post(jetFull,'/api/vehicle',{action:'interact',vehicleId:'marina-jetski'})).status,409);
     assert.equal((await post(jetRider,'/api/vehicle',{action:'input',sequence:1,throttle:1,steer:0})).status,403);
+    for(const p of [jetDriver,jetRider]){
+      assert.equal((await post(p,'/api/state',{voiceEnabled:true})).status,204);await wait(()=>jetFull.events.some(e=>e.type==='state'&&e.player.id===p.id&&e.player.voiceEnabled));
+      assert.equal((await post(p,'/api/state',{voiceEnabled:false})).status,204);await wait(()=>jetFull.events.findLast(e=>e.type==='state'&&e.player.id===p.id)?.player.voiceEnabled===false);
+    }
     const boatDriver=await connect('boat_driver'),riders=[];assert.equal((await post(boatDriver,'/api/vehicle',{action:'paint',vehicleId:'marina-boat',color:'#35a3dd'})).status,204);assert.equal((await post(boatDriver,'/api/vehicle',{action:'interact',vehicleId:'marina-boat'})).status,200);
     for(let i=0;i<9;i++){const p=await connect('boat_rider_'+i);riders.push(p);assert.equal((await post(p,'/api/vehicle',{action:'interact',vehicleId:'marina-boat'})).status,200,'seat '+i);}
     const full=await connect('boat_full');assert.equal((await post(full,'/api/vehicle',{action:'interact',vehicleId:'marina-boat'})).status,409);assert.equal(latest(full,'marina-boat').passengerIds.length,9);

@@ -706,6 +706,10 @@ const server = createServer(async (request, response) => {
       const now = Date.now();
       if(policeGame.isJailed(player)){response.writeHead(204);return response.end();}
       if(client.hijackingVehicleId){response.writeHead(204);return response.end();}
+      if(player.vehicleId||rideSeats.has(player.id)){
+        const voiceActive=hasSfuConfig()?Boolean(client.voiceReady&&client.voicePublishSessionId):Boolean(data.voiceEnabled);
+        if(player.voiceEnabled!==voiceActive){player.voiceEnabled=voiceActive;broadcast({type:'state',player},player.id);}
+      }
       if(rideSeats.has(player.id)){response.writeHead(204);return response.end();}
       if(player.vehicleId){
         if(player.vehicleSeat==='passenger'&&now-client.lastStateAt>=50){

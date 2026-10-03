@@ -28,7 +28,8 @@ test('real server enforces two riders, ownership, proximity, boarding, motion an
     await clock(10000);const before=(await clock(0,seated)).player.position;await delay(70);await clock(3000);await delay(70);const after=(await clock(0,seated)).player.position;assert.ok(Math.hypot(after.x-before.x,after.y-before.y)>.3,'server actually carries the rider');
     assert.equal((await post(seated,'ride',{action:'exit'})).status,409,'no jumping out midair');assert.equal((await post(seated,'weapon',{weaponId:'glock'})).status,409);assert.equal((await post(seated,'combat',{action:'punch'})).status,409);
     await clock();assert.equal((await post(d,'ride',{id:seated.id,action:'exit'})).status,401,'cannot steal another player seat');
-    assert.equal((await post(seated,'state',{position:{x:0,y:0,z:0},sequence:1})).status,204);assert.ok((await clock(0,seated)).player.position.z>200,'client cannot overwrite mounted position');
+    assert.equal((await post(seated,'state',{voiceEnabled:true,position:{x:0,y:0,z:0},sequence:1})).status,204);assert.ok((await clock(0,seated)).player.position.z>200,'client cannot overwrite mounted position');assert.equal((await clock(0,seated)).player.voiceEnabled,true,'microphone can be activated while riding');
+    assert.equal((await post(seated,'state',{voiceEnabled:false})).status,204);assert.equal((await clock(0,seated)).player.voiceEnabled,false,'microphone can be turned off while riding');
     await clock(256000-((await clock(0)).now%256000)+2000);assert.equal((await post(seated,'ride',{action:'exit'})).status,204);await waitFor(()=>d.events.some(e=>e.type==='world-state'&&e.rides.length===1));
     const remaining=[a,b,c].find(p=>p.id!==seated.id&&occupied.some(s=>s.id===p.id));remaining.abort.abort();await waitFor(()=>d.events.filter(e=>e.type==='world-state').at(-1).rides.length===0);
     // Full train: three independent benches, two seats each; exiting returns to deck.
