@@ -163,6 +163,7 @@ const allowedFiles = new Map([
   ['/phone-client.js', 'phone-client.js'],
   ['/voice-face.js', 'voice-face.js'],
   ['/police-client.js', 'police-client.js'],
+  ['/map-client.js', 'map-client.js'],
   ['/stage-media.js', 'stage-media.js'],
   ['/motion-sync.js', 'motion-sync.js'],
   ['/world-systems.js', 'world-systems.js'],

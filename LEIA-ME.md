@@ -59,7 +59,12 @@ A delegacia fica a oeste da praça, em **x -46 / z -18**, substituindo o primeir
 - A praça continua sem armas e tiros. A polícia pode seguir e capturar quem já estiver procurado lá dentro; perseguições são suspensas durante Zombies.
 - Policiais revidam disparos validados, com tempo de reação, chance de errar e cadência limitada. Obstáculos e a praça bloqueiam os tiros; agressões sem arma continuam levando à captura. Viaturas de polícia ainda não podem ser dirigidas pelos jogadores.
 - A perseguição usa viaturas mais rápidas, policiais espaçados e a última posição vista. Após perder o suspeito, a primeira estrela diminui depois de 60 segundos sem novos crimes, e as seguintes a cada 20 segundos.
-- Equipes são distribuídas entre os procurados. Reforços saem pela delegacia, limitados a seis viaturas de patrulha e 18 policiais. Viaturas cuja equipe foi morta ficam paradas por 30 segundos e somem; policiais renascem na delegacia após 30 segundos e retomam a patrulha. Viaturas cedem passagem em conflitos frontais.
+- Equipes são distribuídas entre os procurados. Reforços saem pela porta da delegacia em fila e embarcam antes da perseguição, limitados a seis viaturas de patrulha e 18 policiais. O crime inicia uma busca pela última posição conhecida, mesmo sem contato visual inicial. Viaturas com equipe incompleta recolhem outro policial na delegacia e retomam a ronda com uma dupla. Viaturas vazias são reaproveitadas antes de criar novas; se não forem necessárias, somem após 30 segundos. Policiais renascem na delegacia após 30 segundos. Viaturas cedem passagem em conflitos frontais.
+
+## Mapa da cidade
+
+- **M** no PC ou o botão **MAPA** no celular abre o mapa, com posição e direção do jogador, ruas, praça safe, delegacia, garagem, boutiques, praia, píer e marina.
+- Durante uma perseguição, os policiais vivos aparecem em azul, com posições atualizadas dez vezes por segundo. Fora da perseguição os policiais ficam ocultos no mapa. O mapa não pausa o servidor; feche com M, Escape ou ×.
 
 ## Marina (prévia local)
 

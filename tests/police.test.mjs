@@ -4,6 +4,29 @@ import '../city-layout.js';
 import '../world-systems.js';
 import {createPoliceGame} from '../police-server.mjs';
 function fixture(){let now=100000,paused=false;const players=new Map(),events=[],arrests=[],releases=[];const game=createPoliceGame({world:LowkeyWorld,layout:LowkeyCityLayout,players,broadcast:e=>events.push(e),clock:()=>now,paused:()=>paused,arrest:(...args)=>arrests.push(args),release:(...args)=>releases.push(args)});return{game,players,events,arrests,releases,step(n=1){for(let i=0;i<n;i++){now+=50;game.tick();}},pause(v){paused=v;}};}
+
+test('reinforcement officers leave the real station, board their cars and resume patrol after the suspect leaves',()=>{
+  const f=fixture(),p={id:'dispatch',accountId:'dispatch',health:100,position:{x:160,y:3.2,z:310}};f.players.set(p.id,p);f.game.crime(p,10);
+  let departure=false;
+  for(let i=0;i<1200;i++){f.step();for(const c of f.game.cars.filter(c=>Number(c.id.split('-').at(-1))>2)){if(!c.deploying&&c.speed>0)departure=true;for(const id of c.officerIds){const o=f.game.officers.get(id);if(!o.seated)assert.ok(LowkeyWorld.clearAt(o.position.x,o.position.z,.30),'walking stays outside walls');}}}
+  assert.ok(departure,'reinforcements must actually board and drive away, not circle the station');
+  f.players.clear();f.step(1200);assert.ok(f.game.cars.every(c=>!c.deploying&&c.officerIds.every(id=>f.game.officers.get(id).seated)),'all crews return to their assigned vehicles');
+});
+
+test('a patrol with a missing officer collects a second officer and resumes its route',()=>{
+  const f=fixture(),car=f.game.cars[0];f.game.hurt(car.officerIds[0],100,null);let repaired=false;
+  for(let i=0;i<2400;i++){f.step();if(car.officerIds.length===2&&!car.recruiting&&!car.deploying&&car.speed>0&&car.officerIds.every(id=>f.game.officers.get(id).seated)){repaired=true;break;}}
+  assert.ok(repaired,'a surviving officer must not leave a half-crewed car parked forever');
+  assert.equal(new Set(f.game.cars.flatMap(c=>c.officerIds)).size,f.game.cars.flatMap(c=>c.officerIds).length,'an officer belongs to only one car');
+});
+
+test('crime dispatches a search without visual contact and station teams finish the exit before following moving targets',()=>{
+  const f=fixture(),p={id:'hidden',accountId:'hidden',health:100,position:{x:160,y:3.2,z:310}};f.players.set(p.id,p);f.game.crime(p,10);f.step();
+  assert.ok(f.game.cars.every(c=>c.targetId===p.id),'cars start a city-wide search immediately, outside sight range');
+  f.step(245);const car=f.game.cars.find(c=>c.deploying);assert.ok(car);let usedDoor=false,departed=false;
+  for(let i=0;i<800;i++){if(i%30===0){p.position.x=-p.position.x;f.game.crime(p,1);}f.step();for(const id of car.officerIds){const o=f.game.officers.get(id);if(!o.seated){const gate=LowkeyCityLayout.policePoint(0,7.5);usedDoor||=Math.hypot(o.position.x-gate.x,o.position.z-gate.z)<1.1;}}departed||=!car.deploying&&car.speed>0;}
+  assert.ok(usedDoor,'the assigned team crosses the station doorway');assert.ok(departed,'target movement cannot interrupt deployment');
+});
 test('station has walkable entrance and a contained jail; two cars carry four officers plus two at station',()=>{
   const f=fixture();assert.equal(f.game.cars.length,2);assert.equal(f.game.officers.size,6);assert.equal([...f.game.officers.values()].filter(o=>o.seated).length,4);
   assert.equal(LowkeyWorld.clearAt(LowkeyCityLayout.jailExit.x,LowkeyCityLayout.jailExit.z,.32),true);
@@ -40,12 +63,12 @@ test('station officers find the doorway and walk around walls rather than throug
 test('frequent motion snapshots are compact and do not resend avatar appearances',()=>{
   const f=fixture();f.step();const motion=f.events.find(e=>e.type==='police-motion');assert.equal(motion.officers.length,6);assert.equal(motion.cars.length,2);assert.equal(JSON.stringify(motion).includes('appearance'),false);assert.ok(JSON.stringify(motion).length<JSON.stringify(f.game.snapshot()).length/2);
 });
-test('a defeated patrol car stays abandoned then disappears; its officers respawn inside the station and patrol again',()=>{
+test('an empty patrol is reused by a fresh two-officer crew; dead officers respawn in the station',()=>{
   const f=fixture(),car=f.game.cars[0],ids=[...car.officerIds],before={x:car.x,z:car.z};for(const id of ids)assert.ok(f.game.hurt(id,100,null));
   f.step(200);assert.ok(f.game.cars.includes(car));assert.deepEqual({x:car.x,z:car.z},before);assert.equal(car.speed,0);assert.equal(car.lights,false);
-  f.step(400);assert.equal(f.game.cars.some(c=>c.id===car.id),false);for(const id of ids){const o=f.game.officers.get(id);assert.equal(o.health,100);assert.equal(o.carId,null);assert.equal(o.seated,false);assert.ok(Math.hypot(o.position.x-o.home.x,o.position.z-o.home.z)<.01);}
+  f.step(400);assert.equal(f.game.cars.some(c=>c.id===car.id),true);assert.equal(car.officerIds.length,2);assert.ok(car.officerIds.every(id=>!ids.includes(id)),'reuse the car with a living replacement crew');for(const id of ids){const o=f.game.officers.get(id);assert.equal(o.health,100);assert.equal(o.carId,null);assert.equal(o.seated,false);assert.ok(Math.hypot(o.position.x-o.home.x,o.position.z-o.home.z)<.01);}
   const positions=ids.map(id=>({...f.game.officers.get(id).position}));f.step(100);assert.ok(ids.some((id,i)=>Math.hypot(f.game.officers.get(id).position.x-positions[i].x,f.game.officers.get(id).position.z-positions[i].z)>1));
-  f.step(400);assert.ok(f.game.cars.filter(c=>!c.abandonedUntil).length>=2,'replacement patrol is dispatched');assert.ok(f.events.some(e=>e.type==='police-state'&&!e.cars.some(c=>c.id===car.id)));
+  f.step(800);assert.ok(f.game.cars.filter(c=>!c.abandonedUntil).length>=2,'replacement patrol is dispatched');assert.ok(car.officerIds.every(id=>f.game.officers.get(id).seated),'replacement crew boards and resumes patrol');
 });
 test('reinforcements spawn in the station during pursuit, remain bounded, and stop spawning in Zombies',()=>{
   const f=fixture(),p={id:'wanted',accountId:'wanted',position:{x:160,y:3.2,z:310},health:100};f.players.set(p.id,p);f.game.crime(p,10,{gunfire:true});f.game.hurt('police-5',100,null);f.game.hurt('police-6',100,null);f.step(241);

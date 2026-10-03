@@ -16,7 +16,10 @@
       for(const x of [-.61,.61]){part(group,x,.91,1.77,.36,.12,.04,paint);part(group,x,.91,-1.77,.34,.1,.04,red);}
       const canvas=document.createElement('canvas');canvas.width=256;canvas.height=64;const ctx=canvas.getContext('2d');ctx.fillStyle='#182432';ctx.fillRect(0,0,256,64);ctx.fillStyle='#f3f4e7';ctx.font='bold 38px Arial';ctx.textAlign='center';ctx.fillText('POLÍCIA',128,46);const texture=new THREE.CanvasTexture(canvas),mat=new THREE.MeshBasicMaterial({map:texture});
       for(const side of [-1,1]){const sign=new THREE.Mesh(new THREE.PlaneGeometry(1.2,.29),mat);sign.position.set(side*.91,.99,0);sign.rotation.y=side*Math.PI/2;group.add(sign);}
-      return {group,wheels,lights,samples:[],state,owned:[texture,mat]};
+      // Batch the fixed body panels without changing their geometry or lighting.
+      const byMaterial=new Map(),batches=[];for(const mesh of [...group.children])if(mesh.geometry===boxGeo&&!lights.includes(mesh)){const pieces=byMaterial.get(mesh.material)||[];pieces.push(mesh);byMaterial.set(mesh.material,pieces);}
+      for(const [material,pieces]of byMaterial){const batch=new THREE.InstancedMesh(boxGeo,material,pieces.length);batch.castShadow=true;batch.receiveShadow=true;pieces.forEach((mesh,i)=>{mesh.updateMatrix();batch.setMatrixAt(i,mesh.matrix);group.remove(mesh);});batch.instanceMatrix.needsUpdate=true;group.add(batch);batches.push(batch);}
+      return {group,wheels,lights,batches,samples:[],state,owned:[texture,mat]};
     }
     function sample(entry,state,p,at){entry.state=state;entry.samples.push({at,x:p.x,y:p.y,z:p.z,rotation:state.rotation});while(entry.samples.length>5)entry.samples.shift();}
     function pose(entry,now){const samples=entry.samples;if(!samples.length)return;const at=now-120;while(samples.length>2&&samples[1].at<=at)samples.shift();const a=samples[0],b=samples[1]||a,t=Math.max(0,Math.min(1,(at-a.at)/Math.max(1,b.at-a.at))),delta=Math.atan2(Math.sin(b.rotation-a.rotation),Math.cos(b.rotation-a.rotation));entry.group.position.set(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,a.z+(b.z-a.z)*t);entry.group.rotation.y=a.rotation+delta*t;}
@@ -28,9 +31,9 @@
       if(message.type==='police-motion'){message={...message,cars:message.cars.map(([id,x,y,z,rotation,speed,lights])=>({...models.get(id)?.state,id,x,y,z,rotation,speed,lights})),officers:message.officers.map(([id,x,y,z,rotation,walking,seated,health,armed,aiming,aimPitch])=>({...rigs.get(id)?.state,id,position:{x,y,z},rotation,walking,seated,health,armed,aiming,aimPitch}))};}
       const now=performance.now();clockOffset=message.serverTime-Date.now();const me=(message.wanted||[]).find(p=>p.id===getLocalId());stars=me?.stars||0;jailUntil=me?.jailUntil||0;
       for(const state of message.cars){let model=models.get(state.id);if(!model){model=carModel(state);models.set(state.id,model);}sample(model,state,state,now);}
-      for(const [id,model] of models)if(!message.cars.some(c=>c.id===id)){scene.remove(model.group);for(const owned of model.owned)owned.dispose();model.group.traverse(o=>{if(o.geometry?.type==='PlaneGeometry')o.geometry.dispose();});models.delete(id);}
-      for(const state of message.officers){let rig=rigs.get(state.id);if(!rig){rig={...makeAvatar(state.appearance,'POLICIAL'),samples:[]};rig.group.traverse(o=>{if(o.isSprite)o.visible=false;});const cap=new THREE.Mesh(new THREE.BoxGeometry(.96,.13,.74),dark);cap.position.set(0,2.53,0);rig.head.add(cap);part(rig.head,0,2.46,.41,.77,.04,.28,dark);part(rig.body,-.27,1.58,.37,.1,.15,.025,paint);rigs.set(state.id,rig);}sample(rig,state,state.position,now);}
-      for(const [id,rig] of rigs)if(!message.officers.some(o=>o.id===id)){scene.remove(rig.group);disposeAvatar(rig.group);rigs.delete(id);}return true;
+      for(const [id,model] of models)if(!message.cars.some(c=>c.id===id)){scene.remove(model.group);for(const batch of model.batches)batch.dispose();for(const owned of model.owned)owned.dispose();model.group.traverse(o=>{if(o.geometry?.type==='PlaneGeometry')o.geometry.dispose();});models.delete(id);}
+      for(const state of message.officers){let rig=rigs.get(state.id);if(!rig){rig={...makeAvatar(state.appearance,'POLICIAL'),samples:[]};rig.group.traverse(o=>{if(o.isSprite)o.visible=false;});const cap=new THREE.Mesh(new THREE.BoxGeometry(.96,.13,.74),dark);cap.position.set(0,2.53,0);rig.head.add(cap);rig.policeParts=[cap,part(rig.head,0,2.46,.41,.77,.04,.28,dark),part(rig.body,-.27,1.58,.37,.1,.15,.025,paint)];rigs.set(state.id,rig);}sample(rig,state,state.position,now);}
+      for(const [id,rig] of rigs)if(!message.officers.some(o=>o.id===id)){scene.remove(rig.group);for(const p of rig.policeParts){p.parent.remove(p);if(p.geometry!==boxGeo)p.geometry.dispose();}disposeAvatar(rig.group);rigs.delete(id);}return true;
     }
     function update(dt,now){for(const model of models.values()){pose(model,now);model.wheels.forEach(w=>w.rotation.x+=(model.state.speed||0)*dt/.41);model.lights.forEach((light,i)=>light.visible=model.state.lights&&(Math.floor(now/140)%2===i));}
       for(const rig of rigs.values()){pose(rig,now);const s=rig.state;rig.group.scale.setScalar(s.seated?.68:1);if(s.health<=0){rig.group.rotation.z=Math.PI/2;rig.group.position.y+=.3;}else rig.group.rotation.z=0;
@@ -39,7 +42,7 @@
       }
       const seconds=Math.max(0,Math.ceil((jailUntil-(Date.now()+clockOffset))/1000)),text=seconds?`PRESO · LIBERADO EM ${seconds}s`:`${'★'.repeat(stars)} · PROCURADO ${stars}/5`;hud.hidden=!getLocalId()||(!stars&&!seconds);if(text!==previousHud){previousHud=text;hud.textContent=text;hud.setAttribute('aria-label',seconds?`Preso, ${seconds} segundos restantes`:`Nível de perseguição: ${stars} estrelas`);}
     }
-    return {receive,update,models,rigs,isJailed:()=>jailUntil>Date.now()+clockOffset};
+    return {receive,update,models,rigs,stars:()=>stars,isJailed:()=>jailUntil>Date.now()+clockOffset};
   }
   globalThis.LowkeyPolice={create};
 })();
