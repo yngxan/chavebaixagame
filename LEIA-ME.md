@@ -61,6 +61,8 @@ A delegacia fica a oeste da praça, em **x -46 / z -18**, substituindo o primeir
 - A perseguição usa viaturas mais rápidas, policiais espaçados e a última posição vista. Após perder o suspeito, a primeira estrela diminui depois de 60 segundos sem novos crimes, e as seguintes a cada 20 segundos.
 - Equipes são distribuídas entre os procurados. Reforços saem pela porta da delegacia em fila e embarcam antes da perseguição, limitados a seis viaturas de patrulha e 18 policiais. O crime inicia uma busca pela última posição conhecida, mesmo sem contato visual inicial. Viaturas com equipe incompleta recolhem outro policial na delegacia e retomam a ronda com uma dupla. Viaturas vazias são reaproveitadas antes de criar novas; se não forem necessárias, somem após 30 segundos. Policiais renascem na delegacia após 30 segundos. Viaturas cedem passagem em conflitos frontais.
 
+Na recuperação das patrulhas, policiais renascem em posições livres e usam pontos de ronda separados. Ao passar pela porta, deixam imediatamente a etapa de saída, sem formar fila num único ponto externo. Viaturas que saíram da rota procuram um caminho de volta à rua respeitando árvores e prédios, com busca limitada e espaçada para não pesar em cada atualização.
+
 ## Mapa da cidade
 
 - **M** no PC ou o botão **MAPA** no celular abre o mapa, com posição e direção do jogador, ruas, praça safe, delegacia, garagem, boutiques, praia, píer e marina.

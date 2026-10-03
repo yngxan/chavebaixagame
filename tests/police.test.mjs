@@ -13,6 +13,28 @@ test('reinforcement officers leave the real station, board their cars and resume
   f.players.clear();f.step(1200);assert.ok(f.game.cars.every(c=>!c.deploying&&c.officerIds.every(id=>f.game.officers.get(id).seated)),'all crews return to their assigned vehicles');
 });
 
+test('after every patrol officer dies, respawned officers do not overlap and replacement patrols remain mobile',()=>{
+  const f=fixture();for(const o of f.game.officers.values())f.game.hurt(o.id,100,null);f.step(600);
+  const respawned=[...f.game.officers.values()].filter(o=>o.health>0&&!o.seated);
+  for(let i=0;i<respawned.length;i++)for(let j=i+1;j<respawned.length;j++)assert.ok(Math.hypot(respawned[i].position.x-respawned[j].position.x,respawned[i].position.z-respawned[j].position.z)>=.575,'officers cannot respawn stacked on the same spot');
+  const before=new Map(respawned.map(o=>[o.id,{...o.position}]));f.step(1200);
+  assert.ok(respawned.every(o=>o.seated||Math.hypot(o.position.x-before.get(o.id).x,o.position.z-before.get(o.id).z)>1),'every respawned officer can leave the station');
+  assert.ok(f.game.cars.filter(c=>c.officerIds.length===2&&!c.deploying&&!c.recruiting&&c.speed>0).length>=2,'both replacement patrols resume');
+});
+
+test('a patrol stranded on the plaza grass finds a collision-free route around a tree and returns to a road',()=>{
+  const f=fixture(),car=f.game.cars[0];Object.assign(car,{x:-21,z:-7,y:0,rotation:Math.PI/2,path:[],planAt:0});assert.equal(LowkeyWorld.vehicleClearAt(car,car.x,car.z,car.rotation),true);let recovered=false;
+  for(let i=0;i<1200;i++){const before={x:car.x,z:car.z};f.step();assert.ok(Math.hypot(car.x-before.x,car.z-before.z)<=.401,'recovery moves normally, never teleports');assert.equal(LowkeyWorld.vehicleClearAt(car,car.x,car.z,car.rotation),true,'cannot cut through the tree or buildings');recovered||=LowkeyCityLayout.roads.some(r=>LowkeyCityLayout.inRect(car.x,car.z,r))&&car.speed===8&&!car.recovery;}
+  assert.ok(recovered,'resume normal patrol after road recovery');
+});
+
+test('simultaneous deaths of six patrol teams rebuild crews without a permanent station queue',()=>{
+  const f=fixture();for(let i=0;i<3;i++){const p={id:'wipe'+i,accountId:'wipe'+i,health:100,position:{x:(i-1)*100,y:3.2,z:310}};f.players.set(p.id,p);f.game.crime(p,20);}f.step(1200);assert.equal(f.game.cars.length,6);
+  for(const o of f.game.officers.values())f.game.hurt(o.id,100,null);
+  for(let i=0;i<2800;i++){if(i%400===0)for(const p of f.players.values())f.game.crime(p,20);f.step();assert.ok(f.game.officers.size<=18);assert.ok(f.game.cars.length<=6);}
+  assert.ok(f.game.cars.length>=4);assert.ok(f.game.cars.filter(c=>!c.abandonedUntil).every(c=>c.officerIds.length===2&&!c.deploying&&!c.recruiting&&c.officerIds.every(id=>f.game.officers.get(id).seated)),'rebuilt crews cannot stay stuck at the station');
+});
+
 test('a patrol with a missing officer collects a second officer and resumes its route',()=>{
   const f=fixture(),car=f.game.cars[0];f.game.hurt(car.officerIds[0],100,null);let repaired=false;
   for(let i=0;i<2400;i++){f.step();if(car.officerIds.length===2&&!car.recruiting&&!car.deploying&&car.speed>0&&car.officerIds.every(id=>f.game.officers.get(id).seated)){repaired=true;break;}}

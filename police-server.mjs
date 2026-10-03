@@ -45,23 +45,26 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
   }
   function isJailed(player){return Boolean(player&&getRecord(player)?.jailUntil>clock());}
   function connect(player){const record=getRecord(player);if(record?.jailUntil>clock())arrest(player,record.jailUntil,layout.jail);else if(record?.jailUntil){record.jailUntil=0;release(player,layout.jailExit);}}
+  function stationSpawn(preferred,exclude=null){const candidates=[preferred];for(const z of [2,4,.2,-1.6,-3.4])for(let x=-6;x<=6;x+=1.2){if(x>1.5&&z<1)continue;candidates.push({...layout.policePoint(x,z),y:.12});}
+    return candidates.filter(p=>world.clearAt(p.x,p.z,.34)).sort((a,b)=>distance(a,preferred)-distance(b,preferred)).find(p=>![...officers.values()].some(o=>o!==exclude&&o.health>0&&!o.seated&&distance(p,o.position)<.85));
+  }
   function hurt(id,damage,attacker){const officer=officers.get(id);if(!officer||officer.health<=0||paused())return false;officer.health=Math.max(0,officer.health-Math.max(0,Math.min(100,damage)));crime(attacker,officer.health?3:8);if(!officer.health){officer.seated=false;officer.walking=false;officer.respawnAt=clock()+RESPAWN_MS;officer.armed=false;officer.aiming=false;
     const car=cars.find(c=>c.id===officer.carId);officer.carId=null;officer.home={...layout.policePoint((Number(id.split('-').at(-1))%3-1)*2,2),y:.12};if(car){car.officerIds=car.officerIds.filter(o=>o!==id);if(!car.officerIds.length){car.abandonedUntil=clock()+ABANDONED_MS;car.speed=0;car.lights=false;car.targetId=null;car.path=[];structureChanged=true;}}
   }return true;}
   function dispatchCar(now){if(cars.filter(c=>!c.abandonedUntil).length>=MAX_PATROL_CARS)return false;
-    const available=[...officers.values()].filter(o=>o.health>0&&!o.carId&&o.home&&distance(o.position,o.home)<5);
+    const available=[...officers.values()].filter(o=>o.health>0&&!o.carId&&o.home&&distance(o.position,layout.policeStation)<20);
     const room=MAX_OFFICERS-officers.size;if(available.length+room<2)return false;
     const reusable=cars.find(c=>c.abandonedUntil),road=reusable?{p:reusable,node:reusable.node}:nodes.map((p,node)=>({p,node})).sort((a,b)=>distance(a.p,layout.policeStation)-distance(b.p,layout.policeStation)).find(({p})=>world.vehicleClearAt({kind:'car',y:world.groundHeight(p.x,p.z),rotation:0},p.x,p.z,0,world.vehicleObstacles({id:'new-patrol'},[...vehicles.values(),...cars])));
     if(!road)return false;const car=reusable||{id:'police-car-'+nextCar++,kind:'car',x:road.p.x,y:world.groundHeight(road.p.x,road.p.z),z:road.p.z,rotation:0,speed:0,node:road.node,path:[],patrol:nextCar%4,planAt:0,targetId:null,lights:false,officerIds:[],deploying:true};
     if(reusable)Object.assign(car,{abandonedUntil:0,officerIds:[],path:[],targetAccountId:null,targetId:null,planAt:0,recruiting:true,deploying:false,recalling:false,avoidance:null});
-    for(let seat=0;seat<2;seat++){let officer=available.shift();if(!officer){const id='police-'+nextOfficer++,home={...layout.policePoint(seat?-2:2,2),y:.12};officer={id,police:true,home,position:{...home},rotation:layout.policeStation.rotation,walking:false,seated:false,health:100,appearance:{...appearance},respawnAt:0,reinforcement:true};officers.set(id,officer);}officer.carId=car.id;officer.seat=seat;officer.seated=false;officer.targetAccountId=null;car.officerIds.push(officer.id);}
+    for(let seat=0;seat<2;seat++){let officer=available.shift();if(!officer){const id='police-'+nextOfficer++,home=stationSpawn({...layout.policePoint(seat?-2:2,2),y:.12});if(!home)break;officer={id,police:true,home,position:{...home},rotation:layout.policeStation.rotation,walking:false,seated:false,health:100,appearance:{...appearance},respawnAt:0,reinforcement:true};officers.set(id,officer);}officer.carId=car.id;officer.seat=seat;officer.seated=false;officer.targetAccountId=null;car.officerIds.push(officer.id);}
     if(!reusable)cars.push(car);structureChanged=true;return true;
   }
   const visible=(a,b)=>world.shotBlock({x:a.x,y:a.y+1.4,z:a.z},{x:b.x,y:b.y+1.4,z:b.z})===null;
   function refillCrews(){for(const car of cars){if(car.abandonedUntil)continue;
     car.officerIds=car.officerIds.filter(id=>officers.get(id)?.health>0);
-    while(car.officerIds.length<2){let o=[...officers.values()].find(o=>o.health>0&&!o.carId&&o.home&&distance(o.position,o.home)<5);
-      if(!o&&officers.size<MAX_OFFICERS){const id='police-'+nextOfficer++,home={...layout.policePoint(car.officerIds.length?2:-2,2),y:.12};o={id,police:true,home,position:{...home},rotation:layout.policeStation.rotation,seated:false,walking:false,health:100,appearance:{...appearance},respawnAt:0,reinforcement:true};officers.set(id,o);}
+    while(car.officerIds.length<2){let o=[...officers.values()].find(o=>o.health>0&&!o.carId&&o.home&&distance(o.position,layout.policeStation)<20);
+      if(!o&&officers.size<MAX_OFFICERS){const id='police-'+nextOfficer++,home=stationSpawn({...layout.policePoint(car.officerIds.length?2:-2,2),y:.12});if(!home)break;o={id,police:true,home,position:{...home},rotation:layout.policeStation.rotation,seated:false,walking:false,health:100,appearance:{...appearance},respawnAt:0,reinforcement:true};officers.set(id,o);}
       if(!o)break;o.carId=car.id;o.seat=car.officerIds.some(id=>officers.get(id).seat===0)?1:0;o.seated=false;o.targetAccountId=null;car.officerIds.push(o.id);car.recruiting=true;car.deploying=false;car.recalling=false;car.path=[];car.planAt=0;structureChanged=true;
     }
   }}
@@ -74,7 +77,7 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
   function walk(officer,destination,dt,speed=9.2){
     // Complete the doorway manoeuvre before reacting to a moving suspect.
     if(insideStation(officer.position)&&!insideStation(destination))officer.leavingStation=true;
-    if(officer.leavingStation){const gate=layout.policePoint(officer.seat===1?.42:-.42,8.5);if(distance(officer.position,gate)<.45){officer.leavingStation=false;walkPlans.delete(officer.id);}else{destination=gate;speed=Math.min(speed,4.5);}}
+    if(officer.leavingStation){const gate=layout.policePoint(officer.seat===1?.42:-.42,8.5),s=layout.policeStation,forward=(officer.position.x-s.x)*Math.sin(s.rotation)+(officer.position.z-s.z)*Math.cos(s.rotation);if(forward>7.3&&!insideStation(officer.position)){officer.leavingStation=false;walkPlans.delete(officer.id);}else{destination=gate;speed=Math.min(speed,4.5);}}
     let waypoint=destination;const now=clock(),blocked=world.crossesSolid({...officer.position,y:officer.position.y+.15},{...destination,y:officer.position.y+.15});
     let plan=walkPlans.get(officer.id);
     if(blocked||plan&&distance(plan.goal,destination)<1){if(!plan||distance(plan.goal,destination)>2||now>=plan.until){plan={points:footPath(officer.position,destination),goal:{...destination},until:now+5000};walkPlans.set(officer.id,plan);}while(plan.points.length&&distance(officer.position,plan.points[0])<.35)plan.points.shift();if(plan.points.length)waypoint=plan.points[0];else if(blocked){officer.walking=false;return;}}
@@ -121,6 +124,24 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
     const goal=action.points[0],d=distance(car,goal),step=Math.min(d,5*dt),x=car.x+(goal.x-car.x)/Math.max(.001,d)*step,z=car.z+(goal.z-car.z)/Math.max(.001,d)*step;
     if(world.vehicleClearAt(car,x,z,action.heading,blockers)){const reverse=(goal.x-car.x)*Math.sin(action.heading)+(goal.z-car.z)*Math.cos(action.heading)<-.1;car.x=x;car.z=z;car.y=world.groundHeight(x,z);car.rotation=action.heading;car.speed=reverse?-5:5;}else car.speed=0;return true;
   }
+  function roadProjection(position){return layout.roads.map(r=>r.axis==='z'?{x:r.x,z:Math.max(r.z-r.hz+3,Math.min(r.z+r.hz-3,position.z))}:{x:Math.max(r.x-r.hx+3,Math.min(r.x+r.hx-3,position.x)),z:r.z}).sort((a,b)=>distance(a,position)-distance(b,position))[0];}
+  let nextRecoveryAt=0;
+  function recoveryPath(car,goal,blockers){const size=1.5,start={x:Math.round(car.x/size),z:Math.round(car.z/size)},end={x:Math.round(goal.x/size),z:Math.round(goal.z/size)},open=[{...start,g:0,f:distance(start,end)}],previous=new Map(),cost=new Map([[key(start),0]]),visited=new Set();
+    const all=[...world.drivingObstacles,...blockers],clear=new Map(),p=n=>({x:n.x*size,z:n.z*size}),free=n=>{const k=key(n);if(!clear.has(k))clear.set(k,world.clearAt(n.x*size,n.z*size,1.9,all));return clear.get(k);};
+    for(let attempts=0;open.length&&attempts<1200;attempts++){let best=0;for(let i=1;i<open.length;i++)if(open[i].f<open[best].f)best=i;const n=open.splice(best,1)[0],k=key(n);if(visited.has(k))continue;visited.add(k);
+      if(k===key(end)){const points=[goal];for(let at=k;at!==key(start);at=previous.get(at)){const [x,z]=at.split(':').map(Number);points.unshift(p({x,z}));}return points;}
+      for(const [dx,dz]of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]){const v={x:n.x+dx,z:n.z+dz},vk=key(v);if(visited.has(vk)||!free(v)||dx&&dz&&(!free({x:n.x+dx,z:n.z})||!free({x:n.x,z:n.z+dz})))continue;const g=n.g+Math.hypot(dx,dz);if(g>=(cost.get(vk)??Infinity))continue;cost.set(vk,g);previous.set(vk,k);open.push({...v,g,f:g+distance(v,end)});}
+    }return[];
+  }
+  function recoverCar(car,dt,blockers,now){const road=roadProjection(car),offRoad=distance(car,road)>2.2,stalled=car.blockedAt&&now-car.blockedAt>3500;
+    if(!car.recovery&&!offRoad&&!stalled)return false;
+    if(!car.recovery){if(now<nextRecoveryAt||now<(car.recoveryRetryAt||0))return false;nextRecoveryAt=now+1000;car.recoveryRetryAt=now+5000;const points=recoveryPath(car,road,blockers);if(!points.length)return false;car.recovery={points,until:now+18000};car.avoidance=null;}
+    const action=car.recovery;if(now>action.until){car.recovery=null;return false;}while(action.points.length&&distance(car,action.points[0])<.15)action.points.shift();
+    if(!action.points.length){car.recovery=null;car.blockedAt=0;car.path=[];car.node=nearest(car);car.planAt=0;return false;}
+    const goal=action.points[0],d=distance(car,goal),travel=Math.min(d,4*dt),heading=angle(car,goal),x=car.x+(goal.x-car.x)/d*travel,z=car.z+(goal.z-car.z)/d*travel;
+    if(world.vehicleClearAt(car,car.x,car.z,heading,blockers)&&world.vehicleClearAt(car,x,z,heading,blockers)){car.x=x;car.z=z;car.y=world.groundHeight(x,z);car.rotation=heading;car.speed=4;}else{car.speed=0;if(now>car.recoveryRetryAt){car.recovery=null;car.recoveryRetryAt=now+3000;}}
+    return true;
+  }
   function tick(){const now=clock(),dt=Math.max(0,Math.min(.1,(now-lastAt)/1000));lastAt=now;
     if(!paused())refillCrews();
     for(let i=cars.length-1;i>=0;i--)if(cars[i].abandonedUntil&&now>=cars[i].abandonedUntil){cars.splice(i,1);structureChanged=true;}
@@ -145,6 +166,7 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
 }}else{if(!car.path.length||now>=car.planAt&&distance(car,nodes[car.node])<.15){let goalNode;if(target){goalNode=nearest(goal);const occupied=cars.some(c=>c!==car&&c.targetId===target.id&&(c.goalNode===goalNode||distance(c,nodes[goalNode])<5));if(occupied){const alternatives=[...(edges.get(goalNode)||[])].filter(n=>!cars.some(c=>c!==car&&c.goalNode===n));if(alternatives.length)goalNode=alternatives.sort((a,b)=>distance(nodes[a],goal)-distance(nodes[b],goal))[0];}}else if(car.recruiting){goalNode=nearest(layout.policePoint(0,12));}else{goalNode=patrolPoints[car.patrol%4];if(car.node===goalNode){car.patrol++;goalNode=patrolPoints[car.patrol%4];}}car.goalNode=goalNode;car.path=path(car.node,goalNode);car.planAt=now+650;}
         const chaseSpeed=target?24+Math.min(4,getRecord(target).level*.8):8;let budget=chaseSpeed*dt;while(car.path.length&&budget>0){const next=nodes[car.path[0]],d=distance(car,next),step=Math.min(budget,d),heading=angle(car,next),x=car.x+Math.sin(heading)*step,z=car.z+Math.cos(heading)*step;
           const blockers=[...world.drivingObstacles,...[...vehicles.values()].map(c=>({x:c.x,z:c.z,hx:c.kind==='car'?.9:.4,hz:c.kind==='car'?1.8:1,rot:c.rotation,minY:c.y,maxY:c.y+1.8})),...cars.filter(c=>c!==car).map(c=>({x:c.x,z:c.z,hx:.9,hz:1.8,rot:c.rotation,minY:c.y,maxY:c.y+1.8}))];
+          if(recoverCar(car,dt,blockers,now))break;
           if(car.avoidance&&yieldStep(car,dt,blockers,now))break;
           if(!world.vehicleClearAt({...car,rotation:heading},x,z,heading,blockers)){car.blockedAt||=now;if(now-car.blockedAt>350)planYield(car,heading,blockers,now);break;}
           car.blockedAt=0;car.x=x;car.z=z;car.y=world.groundHeight(x,z);car.rotation=heading;car.speed=chaseSpeed;budget-=step;if(d<=step+.001){car.node=car.path.shift();break;}else break;
@@ -154,8 +176,8 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
       for(const id of car.officerIds)if(!car.recalling)returnFire(officers.get(id),target,now);
     }
     for(const o of officers.values()){
-      if(o.health<=0){if(now>=o.respawnAt){o.health=100;o.position={...(o.home||layout.policePoint(-4+(Number(o.id.split('-').at(-1))%2)*3,3)),y:.12};o.seated=false;o.carId=null;o.targetAccountId=null;o.patrolFoot=true;delete o.fireAt;walkPlans.delete(o.id);structureChanged=true;}continue;}
-      if(o.carId)continue;const target=paused()?null:suspectFrom(o,95);if(target)walk(o,formationPoint(o,getRecord(target).lastPosition||target.position),dt,9.2+Math.min(1.4,getRecord(target).level*.28));else if(o.patrolFoot&&!paused()){const patrol=[layout.policePoint(-3,8),layout.policePoint(3,8),o.home],destination=patrol[(o.patrolStep||0)%patrol.length];if(distance(o.position,destination)<.4)o.patrolStep=(o.patrolStep||0)+1;else walk(o,destination,dt,3.5);}else if(distance(o.position,o.home)>.1)walk(o,o.home,dt,3.5);else{o.walking=false;o.rotation=layout.policeStation.rotation;}
+      if(o.health<=0){if(now>=o.respawnAt){const spawn=stationSpawn(o.home||{...layout.policePoint(0,2),y:.12},o);if(!spawn)continue;o.health=100;o.home={...spawn};o.position={...spawn};o.leavingStation=false;o.seated=false;o.carId=null;o.targetAccountId=null;o.patrolFoot=true;o.stuckSince=0;delete o.fireAt;walkPlans.delete(o.id);structureChanged=true;}continue;}
+      if(o.carId)continue;const target=paused()?null:suspectFrom(o,95);if(target)walk(o,formationPoint(o,getRecord(target).lastPosition||target.position),dt,9.2+Math.min(1.4,getRecord(target).level*.28));else if(o.patrolFoot&&!paused()){const index=Number(o.id.split('-').at(-1))-1,side=[-5.5,-4.25,-3,3,4.25,5.5][index%6],row=Math.floor(index/6)%3,patrol=[layout.policePoint(side,8.7+row*1.3),layout.policePoint(side,11.1+row*1.3)],destination=patrol[(o.patrolStep||0)%patrol.length];if(distance(o.position,destination)<.4)o.patrolStep=(o.patrolStep||0)+1;else walk(o,destination,dt,3.5);}else if(distance(o.position,o.home)>.1)walk(o,o.home,dt,3.5);else{o.walking=false;o.rotation=layout.policeStation.rotation;}
       if(!o.leavingStation)returnFire(o,target,now);
     }
     for(const [accountId,r] of offenders)if(![...players.values()].some(p=>p.accountId===accountId)&&now-Math.max(r.lastCrime,r.jailUntil)>180000)offenders.delete(accountId);
@@ -166,6 +188,6 @@ export function createPoliceGame({world,layout,players,vehicles=new Map(),broadc
     if(now-lastBroadcast>=100){lastBroadcast=now;broadcast({type:'police-motion',serverTime:now,cars:cars.map(c=>[c.id,c.x,c.y,c.z,c.rotation,c.speed,c.lights]),officers:[...officers.values()].map(o=>[o.id,o.position.x,o.position.y,o.position.z,o.rotation,o.walking,o.seated,o.health,Boolean(o.armed),Boolean(o.aiming),o.aimPitch||0]),wanted:wanted()});}
   }
   function wanted(){return [...players.values()].map(p=>({id:p.id,stars:getRecord(p)?.level||0,jailUntil:getRecord(p)?.jailUntil||0}));}
-  function snapshot(){return {type:'police-state',serverTime:clock(),station:{x:layout.policeStation.x,z:layout.policeStation.z},cars:cars.map(({path,node,planAt,patrol,targetAccountId,goalNode,recalling,avoidance,blockedAt,...car})=>({...car})),officers:[...officers.values()].map(({home,respawnAt,targetAccountId,fireAt,...o})=>({...o,position:{...o.position}})),wanted:wanted()};}
+  function snapshot(){return {type:'police-state',serverTime:clock(),station:{x:layout.policeStation.x,z:layout.policeStation.z},cars:cars.map(({path,node,planAt,patrol,targetAccountId,goalNode,recalling,avoidance,blockedAt,recovery,recoveryRetryAt,...car})=>({...car})),officers:[...officers.values()].map(({home,respawnAt,targetAccountId,fireAt,...o})=>({...o,position:{...o.position}})),wanted:wanted()};}
   return {tick,crime,hurt,connect,isJailed,snapshot,officers,cars,roadNodes:nodes,MAX_OFFICERS,MAX_PATROL_CARS};
 }
