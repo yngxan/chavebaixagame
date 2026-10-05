@@ -56,9 +56,9 @@
   for(const z of [-210,-130,-64,20,92,156])avenue(-433,z,z===156?-312:-260,z,'west');
   avenue(-312,156,-312,177,'west');avenue(20,-322,20,-335,'north');
   for(const z of [-210,-64,92]){
-    const bridge={id:`bridge-${z}`,name:z===-210?'PONTE NORTE':z===-64?'PONTE CENTRAL':'PONTE DA MARINA',x:-252.5,z,hx:142.5,hz:6.3,y:9.2};bridges.push(bridge);
-    // Two broad ramps and a high deck: boats can cross the channel underneath.
-    for(const [x,hx,y,slopeX]of [[-362.5,32.5,4.5875,9.225/65],[-246,84,9.2,0],[-136,26,4.5875,-9.225/52]]){
+    const bridge={id:`bridge-${z}`,name:z===-210?'PONTE NORTE':z===-64?'PONTE CENTRAL':'PONTE DA MARINA',x:-265,z,hx:155,hz:6.3,y:9.2};bridges.push(bridge);
+    // Long, driveable approaches lead smoothly onto the high deck; boats still pass below.
+    for(const [x,hx,y,slopeX]of [[-375,45,4.6,9.2/90],[-265,65,9.2,0],[-155,45,4.6,-9.2/90]]){
       bridgeSurfaces.push({x,z,hx,hz:6.3,y,slopeX,kind:'bridge',ground:true});
       bridgeObstacles.push({x,z,hx,hz:6.3,minY:y-.26,maxY:y,slopeX,kind:'bridge-floor'});
       for(let a=-hx;a<hx;a+=8){const length=Math.min(8,hx-a),px=x+a+length/2,py=y+slopeX*(px-x);for(const side of [-1,1])bridgeObstacles.push({x:px,z:z+side*6.18,hx:length/2,hz:.12,minY:py-.08,maxY:py+1.15,kind:'bridge-rail'});}

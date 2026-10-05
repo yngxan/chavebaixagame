@@ -235,7 +235,9 @@
   }
   function vehicleFrame(vehicle) {
     const angle=vehicle.kind==='moto'?(vehicle.airborne?clamp(Number(vehicle.airPitch)||0,-.4,.85):clamp(Number(vehicle.wheelieAngle)||0,0,.60)):0,shift=-.85*(1-Math.cos(angle))+.36*Math.sin(angle);
-    return {x:vehicle.x+Math.sin(vehicle.rotation)*shift,y:vehicle.y+.36*(1-Math.cos(angle))+.85*Math.sin(angle),z:vehicle.z+Math.cos(vehicle.rotation)*shift,pitch:-angle};
+    let pitch=-angle;
+    if(vehicle.kind==='car'&&!vehicle.airborne){const reach=1.6,sin=Math.sin(vehicle.rotation),cos=Math.cos(vehicle.rotation),ahead=drivingFloor(vehicle.x+sin*reach,vehicle.z+cos*reach,vehicle.y),behind=drivingFloor(vehicle.x-sin*reach,vehicle.z-cos*reach,vehicle.y);if(ahead!==null&&behind!==null)pitch=-clamp(Math.atan2(ahead-behind,reach*2),-.3,.3);}
+    return {x:vehicle.x+Math.sin(vehicle.rotation)*shift,y:vehicle.y+.36*(1-Math.cos(angle))+.85*Math.sin(angle),z:vehicle.z+Math.cos(vehicle.rotation)*shift,pitch};
   }
   function seatPose(vehicle,offset,scale) {
     if(vehicle.kind==='car'){offset={x:offset.x*CAR_SCALE,y:offset.y*CAR_SCALE,z:offset.z*CAR_SCALE};scale*=CAR_SCALE;}

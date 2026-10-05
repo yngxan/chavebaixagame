@@ -298,7 +298,7 @@
         const speed=owned?model.predicted.speed:model.state.speed,steer=(owned?model.predicted.steering:model.state.steering)||0;
         if(watercraft)model.group.rotation.x=Math.sin(serverNow*.0015+pose.z*.1)*.025+Math.min(.08,Math.abs(speed)*.004);
         model.group.rotation.z=THREE.MathUtils.damp(model.group.rotation.z,model.state.kind==='moto'||watercraft?Math.max(-.24,Math.min(.24,steer*speed*.013)):0,8,dt);
-        if(model.doorPivot){const progress=model.state.hijacking?Math.max(0,Math.min(1,(serverNow-model.state.hijacking.startedAt)/LowkeyWorld.HIJACK_MS)):0,open=model.state.wrecked?.35:model.state.hijacking?Math.min(1,progress/.28)*Math.min(1,(1-progress)/.12)*1.05:0;model.doorPivot.rotation.y=THREE.MathUtils.damp(model.doorPivot.rotation.y,-open,18,dt);model.group.rotation.x=THREE.MathUtils.damp(model.group.rotation.x,model.state.wrecked?.08:0,5,dt);}
+        if(model.doorPivot){const progress=model.state.hijacking?Math.max(0,Math.min(1,(serverNow-model.state.hijacking.startedAt)/LowkeyWorld.HIJACK_MS)):0,open=model.state.wrecked?.35:model.state.hijacking?Math.min(1,progress/.28)*Math.min(1,(1-progress)/.12)*1.05:0;model.doorPivot.rotation.y=THREE.MathUtils.damp(model.doorPivot.rotation.y,-open,18,dt);model.group.rotation.x=THREE.MathUtils.damp(model.group.rotation.x,model.state.wrecked?.08:frame.pitch,5,dt);}
         model.wheelAngle+=speed*dt/(model.group.userData.wheelRadius||(model.state.kind==='car'?.41:.36));
         for(const wheel of model.wheels){wheel.rotation.x=model.wheelAngle;wheel.rotation.y=model.frontWheels.includes(wheel)?-steer*.35:0;}
         model.headlight.visible=night>.01&&lit.has(model.state.id);model.headlight.intensity=night*(model.state.kind==='car'?7:4);
