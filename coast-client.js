@@ -1,9 +1,13 @@
 (() => {
   function create({THREE,scene,signMaterial}){
     const layout=LowkeyCityLayout.coast,group=new THREE.Group();group.name='LowKey Beach & Pier';scene.add(group);
+    const rideSeats=new Map();
+    function receiveRides(message){if(!Array.isArray(message.rides))return;rideSeats.clear();for(const seat of message.rides)rideSeats.set(seat.id,seat);}
+    function riderPose(id,time){const s=rideSeats.get(id);return s?LowkeyRides.seat(s.kind,s.bench,s.seat,time):null;}
     const boxGeo=new THREE.BoxGeometry(1,1,1),poleGeo=new THREE.CylinderGeometry(1,1,1,8),batches=new Map(),materials=new Map();
     const material=(color)=>{if(!materials.has(color))materials.set(color,new THREE.MeshStandardMaterial({color,roughness:.8,flatShading:true}));return materials.get(color);};
     const sand=material(0xe9cf98),wetSand=material(0xc4b587),wood=material(0xb37d4d),woodLight=material(0xd0a572),darkWood=material(0x624830),white=material(0xf6f0db),teal=material(0x3daab2),red=material(0xe45252),yellow=material(0xf8c94b),purple=material(0x9369c5),steel=material(0xabbfc8),dark=material(0x263c48),pavement=material(0xd9d2bb),leaf=material(0x4e9d48),leafLight=material(0x81b443),lampMat=material(0xffd9a0);
+    sand.polygonOffset=true;sand.polygonOffsetFactor=-2;sand.polygonOffsetUnits=-3;
     sand.onBeforeCompile=shader=>{
       shader.vertexShader='varying vec2 vSandPosition;\n'+shader.vertexShader;
       shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>',`#include <begin_vertex>
@@ -33,15 +37,15 @@
       const mesh=new THREE.InstancedMesh(geo,mat,capacity);mesh.frustumCulled=false;mesh.renderOrder=1;scene.add(mesh);traces.push({mesh,born,index:0,tire});
     }
     function stampTrace(pool,x,z,rotation,now,side=0){
-      traceDummy.position.set(x+Math.cos(rotation)*side,-.043,z-Math.sin(rotation)*side);traceDummy.rotation.set(-Math.PI/2,0,-rotation);traceDummy.scale.set(pool.tire?.14:.15,pool.tire?.47:.29,1);traceDummy.updateMatrix();
+      const px=x+Math.cos(rotation)*side,pz=z-Math.sin(rotation)*side;traceDummy.position.set(px,(LowkeyWorld.groundHeight(px,pz)??-.05)+.007,pz);traceDummy.rotation.set(-Math.PI/2,0,-rotation);traceDummy.scale.set(pool.tire?.14:.15,pool.tire?.47:.29,1);traceDummy.updateMatrix();
       pool.mesh.setMatrixAt(pool.index,traceDummy.matrix);pool.born.setX(pool.index,now/1000);pool.index=(pool.index+1)%capacity;pool.mesh.instanceMatrix.needsUpdate=true;pool.born.needsUpdate=true;
     }
     function updateTracks(now,actors,vehicles){
       for(const p of traces)p.mesh.material.uniforms.now.value=now/1000;
       const live=new Set();for(const source of [...actors,...vehicles]){
-        live.add(source.id);const sandHere=LowkeyCityLayout.coast.surfaces.some(s=>s.kind==='sand'&&LowkeyCityLayout.inRect(source.x,source.z,s));
+        live.add(source.id);const sandHere=LowkeyCityLayout.groundKind(source.x,source.z)==='sand';
         const old=traceSources.get(source.id);traceSources.set(source.id,old||{x:source.x,z:source.z,side:1});
-        if(!sandHere||source.disabled||Math.abs(source.y+.05)>.35){traceSources.set(source.id,{x:source.x,z:source.z,side:1});continue;}
+        if(!sandHere||source.disabled||Math.abs(source.y-(LowkeyWorld.groundHeight(source.x,source.z)??-.05))>.35){traceSources.set(source.id,{x:source.x,z:source.z,side:1});continue;}
         if(!old)continue;const distance=Math.hypot(source.x-old.x,source.z-old.z),spacing=source.kind?.38:.62;
         if(distance>5){old.x=source.x;old.z=source.z;continue;}
         const count=Math.min(12,Math.floor(distance/spacing));if(!count)continue;
@@ -53,10 +57,11 @@
     lampMat.emissive.set(0xffbf65);
     function part(mat,x,y,z,sx,sy,sz,geo=boxGeo,q=null,cast=true){const key=`${mat.uuid}:${geo.uuid}:${cast}`,batch=batches.get(key)||{mat,geo,cast,items:[]};batch.items.push({x,y,z,sx,sy,sz,q});batches.set(key,batch);}
     function beam(a,b,width,mat,depth=width){const start=new THREE.Vector3(...a),end=new THREE.Vector3(...b),delta=end.clone().sub(start),middle=start.clone().add(end).multiplyScalar(.5),q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),delta.clone().normalize());part(mat,middle.x,middle.y,middle.z,width,delta.length(),depth,boxGeo,q);}
-    for(const s of layout.surfaces){const board=s.kind==='pier'||s.kind==='ramp'||s.kind==='access';part(s.kind==='sand'?sand:s.kind==='promenade'?pavement:wood,s.x,s.y-(board?.17:.30),s.z,s.hx*2,board?.34:.60,s.hz*2,boxGeo,null,false);
+    for(const s of layout.surfaces){if(s.publicDetail)continue;if(s.beachRelief){const positions=[];for(let x=-120;x<120;x+=5)for(let j=0;j<24;j++){const point=(px,row)=>{const z=132+(LowkeyCityLayout.beachEdge(px)-132)*row/24;return[px,LowkeyCityLayout.beachHeight(px,z),z];};const a=point(x,j),b=point(x+5,j),c=point(x,j+1),d=point(x+5,j+1);positions.push(...a,...c,...b,...b,...c,...d);}const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.computeVertexNormals();const terrain=new THREE.Mesh(geo,sand);terrain.receiveShadow=true;group.add(terrain);continue;}const board=s.kind==='pier'||s.kind==='ramp'||s.kind==='access'||s.kind==='dock'||s.kind.startsWith('ride-');part(s.kind==='sand'?sand:s.kind==='promenade'?pavement:wood,s.x,s.y-(board?.17:.30),s.z,s.hx*2,board?.34:.60,s.hz*2,boxGeo,null,false);
       if(board)for(let z=s.z-s.hz+.3;z<s.z+s.hz;z+=.65)part(darkWood,s.x,s.y+.001,z,s.hx*2,.005,.035,boxGeo,null,false);
     }
-    part(wetSand,0,-.052,180.8,240,.012,2.4,boxGeo,null,false);
+    // A deep seabed removes the shallow boxed-island appearance beneath the waves.
+    part(wetSand,-140,-26,-90,1300,.2,1300,boxGeo,null,false);
     // Seafront tile seams and the city-to-beach wayfinding.
     for(let x=-118;x<120;x+=3)part(material(0xb5b5a8),x,.124,126,.035,.008,12,boxGeo,null,false);
     for(const side of [-1,1])for(let x=14;x<120;x+=18){part(teal,side*x,.62,133,.08,1.3,.08);part(white,side*(x+6),.48,133,12,.1,.08);}
@@ -65,8 +70,11 @@
     part(teal,0,5.1,161,12.3,.6,.45);sign('LOWKEY PIER',0,5.08,161.25,10,.8);
     sign('LOWKEY PIER',0,5.08,160.75,10,.8,Math.PI);
     sign('PRAIA →',9,2.3,128,4.5,1.4);part(dark,9,1.3,127.9,.14,2.6,.14);
+    sign('MARINA · JET & LANCHA',0,3.1,269.5,6,1.1,Math.PI);
+    for(const x of [-9,0,9]){part(darkWood,x,-.9,280,.35,2.6,.35,poleGeo);part(steel,x,.54,280,.18,.35,.18);}
+    for(const bay of layout.marinaBays)sign(bay.kind==='boat'?'LANCHA · 10 LUGARES':'JETSKI · 2 LUGARES',bay.x,1.4,280,3.7,.65,Math.PI);
     // Boardwalk support piles descend into the ocean rather than floating on it.
-    for(const s of layout.surfaces.filter(s=>s.kind==='pier')){
+    for(const s of layout.surfaces.filter(s=>s.kind==='pier'&&!s.publicDetail)){
       for(let x=s.x-s.hx+.65;x<s.x+s.hx;x+=8)for(let z=s.z-s.hz+.65;z<s.z+s.hz;z+=7){part(darkWood,x,-1.05,z,.42,4.6,.42,poleGeo);}
       for(const side of [-1,1])part(darkWood,s.x+side*(s.hx-.5),.63,s.z,.3,.55,s.hz*2);
     }
@@ -97,16 +105,21 @@
       sign(k.name,k.x,4.72,k.z+2.36,k.width-.8,.7);
     }
     // Ferris wheel: one rotating rig; cabins counter-rotate to stay upright.
-    const wheel=layout.wheel,wheelRig=new THREE.Group();wheelRig.position.set(wheel.x,wheel.hubY,wheel.z);group.add(wheelRig);
-    for(const side of [-1,1])for(const depth of [-3,3])beam([wheel.x+side*9,1.4,wheel.z+depth],[wheel.x,wheel.hubY,wheel.z+depth*.5],.45,white);
+    const wheel=layout.wheel,wheelRig=new THREE.Group();wheelRig.position.set(wheel.x,wheel.hubY-1.3,wheel.z);group.add(wheelRig);
+    for(const side of [-1,1])for(const depth of [-3,3])beam([wheel.x+side*9,1.4,wheel.z+depth],[wheel.x,wheel.hubY-1.3,wheel.z+depth*.5],.45,white);
     const ringGeo=new THREE.TorusGeometry(wheel.radius,.20,8,72),spokeGeo=new THREE.CylinderGeometry(.07,.07,wheel.radius,6),cabins=[];
     for(const depth of [-1.5,1.5]){const rim=new THREE.Mesh(ringGeo,yellow);rim.position.z=depth;rim.castShadow=true;wheelRig.add(rim);
       for(let i=0;i<16;i++){const angle=i*Math.PI/8,spoke=new THREE.Mesh(spokeGeo,white);spoke.position.set(Math.cos(angle)*wheel.radius/2,Math.sin(angle)*wheel.radius/2,depth);spoke.rotation.z=angle-Math.PI/2;wheelRig.add(spoke);}
     }
     const hub=new THREE.Mesh(new THREE.CylinderGeometry(.7,.7,4,12),teal);hub.rotation.x=Math.PI/2;wheelRig.add(hub);
     function mesh(parent,mat,x,y,z,sx,sy,sz){const m=new THREE.Mesh(boxGeo,mat);m.position.set(x,y,z);m.scale.set(sx,sy,sz);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m;}
+    const carousel=new THREE.Group(),horses=[],ca=layout.carousel;carousel.name='Carrossel LowKey';carousel.position.set(ca.x,ca.y,ca.z);group.add(carousel);
+    const disc=(radius,height,mat,y)=>{const m=new THREE.Mesh(new THREE.CylinderGeometry(radius,radius,height,32),mat);m.position.y=y;carousel.add(m);return m;};disc(7,.2,purple,.1);disc(.45,5.8,yellow,3);disc(7.4,.35,red,5.7);
+    const canopy=new THREE.Mesh(new THREE.ConeGeometry(7.4,2,32),yellow);canopy.position.y=6.85;carousel.add(canopy);for(let i=0;i<12;i++){const a=i*Math.PI/6,x=Math.cos(a)*4.8,z=Math.sin(a)*4.8;mesh(carousel,white,x,2.9,z,.07,5.4,.07);const horse=new THREE.Group();horse.position.set(x,1,z);horse.rotation.y=-a;carousel.add(horse);mesh(horse,i%2?teal:purple,0,.65,0,.55,.6,1.25);mesh(horse,white,0,1.05,.5,.35,.7,.4);mesh(horse,yellow,0,.98,-.12,.57,.12,.45);for(const dx of [-.2,.2])for(const dz of [-.4,.4])mesh(horse,white,dx,.25,dz,.1,.5,.1);horses.push(horse);}
+    const carouselBatches=[],carouselParts=new Map(),carouselInverse=new THREE.Matrix4(),carouselMatrix=new THREE.Matrix4();carousel.traverse(o=>{if(o.isMesh&&o.geometry===boxGeo){o.updateMatrix();const list=carouselParts.get(o.material)||[];list.push({parent:o.parent,matrix:o.matrix.clone(),mesh:o});carouselParts.set(o.material,list);}});for(const [mat,list]of carouselParts){const batch=new THREE.InstancedMesh(boxGeo,mat,list.length);batch.castShadow=true;batch.receiveShadow=true;batch.frustumCulled=false;for(const p of list)p.parent.remove(p.mesh);carousel.add(batch);carouselBatches.push({batch,list});}
+    function poseCarousel(){carousel.updateMatrixWorld(true);carouselInverse.copy(carousel.matrixWorld).invert();for(const {batch,list}of carouselBatches){list.forEach((p,i)=>{carouselMatrix.multiplyMatrices(carouselInverse,p.parent.matrixWorld).multiply(p.matrix);batch.setMatrixAt(i,carouselMatrix);});batch.instanceMatrix.needsUpdate=true;}}poseCarousel();
     for(let i=0;i<16;i++){const angle=i*Math.PI/8,pivot=new THREE.Group(),cabin=new THREE.Group();pivot.position.set(Math.cos(angle)*wheel.radius,Math.sin(angle)*wheel.radius,0);wheelRig.add(pivot);pivot.add(cabin);const color=[red,yellow,teal,purple][i%4];
-      mesh(cabin,color,0,-1.0,0,2.1,.95,2.8);mesh(cabin,color,0,.2,0,2.35,.16,3);for(const x of [-.95,.95])for(const z of [-1.2,1.2])mesh(cabin,white,x,-.35,z,.1,1.1,.1);cabins.push(cabin);
+      mesh(cabin,color,0,-1.35,0,2.3,.3,2.8);mesh(cabin,color,0,1.6,0,2.5,.16,3);for(const x of [-1.1,1.1])for(const z of [-1.2,1.2])mesh(cabin,white,x,.12,z,.1,2.95,.1);mesh(cabin,dark,0,-.55,-.55,2,.13,.9);mesh(cabin,color,0,-.18,-1,2,.75,.15);cabins.push(cabin);
     }
     const bulbs=[];
     const bulbGeo=new THREE.SphereGeometry(.16,6,4),bulbMat=new THREE.MeshBasicMaterial({color:0xffe492});
@@ -118,7 +131,8 @@
     for(let i=0;i<72;i++){const t=i/72,p=track.getPointAt(t),d=track.getTangentAt(t),n=new THREE.Vector3(d.z,0,-d.x).normalize();beam([p.x-n.x*.9,p.y-.17,p.z-n.z*.9],[p.x+n.x*.9,p.y-.17,p.z+n.z*.9],.12,teal);}
     for(const [x,y,z] of layout.trackSupports)beam([x,1.4,z],[x,y-.2,z],.26,purple);
     const train=[];
-    for(let i=0;i<3;i++){const car=new THREE.Group();mesh(car,i%2?teal:red,0,.48,0,1.35,.75,1.9);mesh(car,dark,0,.92,-.24,1.1,.1,1.2);mesh(car,yellow,0,1.08,.63,1.35,.1,.1);group.add(car);train.push(car);}
+    for(let i=0;i<3;i++){const car=new THREE.Group();mesh(car,i%2?teal:red,0,.48,0,2.2,.75,1.9);mesh(car,dark,0,.92,-.24,1.95,.1,1.2);mesh(car,dark,0,1.25,-.72,1.95,.7,.13);mesh(car,yellow,0,1.22,.63,2.2,.1,.1);group.add(car);train.push(car);}
+    for(const s of Object.values(LowkeyRides.stations)){part(teal,s.x-4.2,s.y+.9,s.z,.16,1.8,.16);sign(s.name+(s.seats===1?' · 12 LUGARES':' · 2 POR BANCO'),s.x-4.2,s.y+1.8,s.z,4.4,.65);}
     for(const l of layout.lamps){part(teal,l.x,l.y+2.15,l.z,.12,4.3,.12);part(white,l.x,l.y+4.38,l.z,.75,.18,.75);part(lampMat,l.x,l.y+4.19,l.z,.55,.25,.55);}
     // Warm festoon lights across the park.
     for(const z of [204,244]){for(const x of [-35,35])part(teal,x,4.2,z,.16,5.6,.16);beam([-35,7,z],[35,7,z],.035,dark);for(let x=-32;x<=32;x+=4)part(lampMat,x,6.72,z,.14,.24,.14,poleGeo,null,false);}
@@ -139,13 +153,13 @@
         }`,
       fragmentShader:`uniform float time;uniform float night;varying vec3 vWater;varying vec3 vNormalWater;varying float vWave;
         #include <fog_pars_fragment>
-        void main(){vec2 p=vWater.xz;vec3 n=normalize(vNormalWater+vec3(sin(p.y*1.1+time*1.8)*.025,0.,sin(p.x*1.25-time*1.6)*.022));
+        void main(){vec2 p=vWater.xz;float detail=1.-smoothstep(100.,400.,length(cameraPosition-vWater));vec3 n=normalize(vNormalWater+detail*vec3(sin(p.y*1.1+time*1.8)*.025,0.,sin(p.x*1.25-time*1.6)*.022));
           vec3 view=normalize(cameraPosition-vWater);float fresnel=pow(1.-max(0.,dot(n,view)),3.);
           vec2 island=max(abs(p-vec2(0.,24.))-vec2(134.,158.),vec2(0.));float shore=length(island);
           vec3 deep=vec3(.018,.19,.27),shallow=vec3(.025,.43,.42),sky=vec3(.34,.64,.72);
           vec3 color=mix(shallow,deep,smoothstep(0.,75.,shore));color=mix(color,sky,fresnel*.7);
-          float glint=pow(max(0.,dot(reflect(-normalize(vec3(-.45,.8,-.35)),n),view)),110.);
-          float crest=smoothstep(.15,.235,vWave)*.10;
+          float glint=pow(max(0.,dot(reflect(-normalize(vec3(-.45,.8,-.35)),n),view)),110.)*mix(.12,1.,detail);
+          float crest=smoothstep(.15,.235,vWave)*.10*mix(.1,1.,detail);
           float foam=(1.-smoothstep(.1,2.7,shore))*smoothstep(.4,.8,sin(shore*2.4+time*1.1+sin(p.x*.22)*.3));
           color+=vec3(.7,.75,.65)*(glint*.7+crest);color=mix(color,vec3(.72,.87,.82),foam*.55);
           color=mix(color,color*.21+vec3(.008,.019,.035)+vec3(.16,.22,.29)*fresnel*.25,night);gl_FragColor=vec4(color,1.);
@@ -154,19 +168,22 @@
           #include <fog_fragment>
         }`
     }));water.rotation.x=-Math.PI/2;water.position.set(0,layout.waterY,0);water.renderOrder=0;water.frustumCulled=false;scene.add(water);
+    // Cheap horizon ring outside the existing detailed water mesh: no visible square edge.
+    for(const [x,z,width,depth]of [[-1500,0,1800,4800],[1500,0,1800,4800],[0,-1500,1200,1800],[0,1500,1200,1800]]){const horizon=new THREE.Mesh(new THREE.PlaneGeometry(width,depth,16,16),water.material);horizon.rotation.x=-Math.PI/2;horizon.position.set(x,layout.waterY,z);scene.add(horizon);}
     const surf=[];
     for(let i=0;i<4;i++){const foam=new THREE.Mesh(new THREE.PlaneGeometry(244,.75),new THREE.MeshBasicMaterial({color:0xf1f7dc,transparent:true,opacity:.35,depthWrite:false}));foam.rotation.x=-Math.PI/2;foam.position.set(0,layout.waterY+.12,182+i*2.2);scene.add(foam);surf.push(foam);}
     const lights=Array.from({length:3},()=>{const l=new THREE.PointLight(0xffcd88,0,20,2);group.add(l);return l;});let lastSelect=-Infinity,selected=[];
     function update(night,position,now,serverTime=now){
       const time=serverTime/1000;water.material.uniforms.time.value=time%10000;water.material.uniforms.night.value=night;
-      wheelRig.rotation.z=(time*.085)%(Math.PI*2);for(const cabin of cabins)cabin.rotation.z=-wheelRig.rotation.z;
-      for(let i=0;i<train.length;i++){const t=(time*.036-i*.027)%1,p=track.getPointAt((t+1)%1),d=track.getTangentAt((t+1)%1);train[i].position.copy(p);train[i].lookAt(p.clone().add(d));}
+      carousel.rotation.y=LowkeyRides.phase('carousel',serverTime).angle;horses.forEach((horse,i)=>horse.position.y=1+Math.sin(time*1.3+i*Math.PI/6)*.22);poseCarousel();
+      wheelRig.rotation.z=LowkeyRides.phase('wheel',serverTime).angle;for(const cabin of cabins)cabin.rotation.z=-wheelRig.rotation.z;
+      for(let i=0;i<train.length;i++){const p=LowkeyRides.bench('coaster',i,serverTime);train[i].position.set(p.x,p.y,p.z);train[i].rotation.set(p.pitch,p.rotation,0,'YXZ');}
       lampMat.emissiveIntensity=.05+night*1.9;bulbMat.color.setRGB(1,.8+.12*(1-night),.42+.22*(1-night));
       surf.forEach((foam,i)=>{const phase=(time*.13+i*.25)%1;foam.position.z=182+phase*7;foam.position.y=layout.waterY+.14+Math.sin(time*.7+i)*.035;foam.material.opacity=Math.sin(phase*Math.PI)*(.24+.12*(1-night));});
       if(now-lastSelect>350){lastSelect=now;selected=layout.lamps.map(p=>({...p,distance:Math.hypot(p.x-position.x,p.z-position.z)})).filter(p=>p.distance<25).sort((a,b)=>a.distance-b.distance).slice(0,3);}
       lights.forEach((l,i)=>{const p=selected[i];l.intensity=p?night*12:0;if(p)l.position.set(p.x,p.y+4,p.z);});
     }
-    return{group,water,update,updateTracks,traces,wheelRig,cabins,train,track,lights,instanceCount,batchCount:batches.size};
+    return{group,water,update,updateTracks,traces,wheelRig,cabins,train,track,lights,instanceCount,batchCount:batches.size,rideSeats,receiveRides,riderPose,carousel};
   }
   globalThis.LowkeyCoast={create};
 })();

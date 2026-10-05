@@ -11,7 +11,7 @@ test('a temporary state error or an old request does not disable the open room c
     connected:true,localId:'current-player',stateRequestsInFlight:0,stateSequence:0,localVehicleId:null,
     document:{hidden:false},performance:{now:()=>1000},currentProfilePayload:()=>({name:'TEST',appearance:{}}),
     avatar:{position:{x:0,y:0,z:0},rotation:{y:0}},currentMoveSpeed:5,onGround:true,voiceEnabled:false,
-    glockEquipped:false,pitch:0,glockAiming:false,setConnection:()=>{},updateRoomStatus:()=>{},connectRoom:()=>{reconnects++;}});
+    glockEquipped:false,selectedWeapon:'punch',yaw:0,pitch:0,glockAiming:false,setConnection:()=>{},updateRoomStatus:()=>{},connectRoom:()=>{reconnects++;}});
   vm.runInContext(html.slice(html.indexOf('  let lastMovementProfile='),html.indexOf('  const colorControls=')),sandbox);
   const settle=()=>new Promise(resolve=>setImmediate(resolve));
   tick();resolveRequest({ok:false,status:503});await settle();

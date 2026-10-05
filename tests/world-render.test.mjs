@@ -60,6 +60,15 @@ test('a remote wheelie tilts the bike and both seated players around the rear ax
   assert.ok(Math.abs(model.group.rotation.x)<.001);
 });
 
+test('local driver prediction stops at external police vehicles just as the server does',()=>{
+ const scene=new THREE.Scene(),material=new THREE.MeshStandardMaterial(),box=(parent,x,y,z,sx,sy,sz,mat)=>{const mesh=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),mat);mesh.position.set(x,y,z);parent.add(mesh);return mesh;};
+ const cop={id:'police-car-test',kind:'car',x:32,z:10,y:-.025,rotation:Math.PI};let calls=0;
+ const controller=sandbox.LowkeyVehicles.create({THREE,scene,box,mats:{red:material},getExternalVehicles:()=>{calls++;return [cop];}}),records=sandbox.LowkeyWorld.initialVehicles(),v=records[0];Object.assign(v,{x:32,z:4,y:-.025,rotation:0,speed:12,driverId:'driver'});
+ controller.receive({vehicles:records,serverTime:100},100,100);let hit=false;
+ for(let i=0;i<90;i++){controller.update(.025,100+i*25,100+i*25,'driver',{throttle:1,steer:0},0);const pose=controller.active('driver').predicted;if(pose.collision){assert.equal(pose.collision.vehicleId,cop.id);hit=true;break;}}
+ assert.ok(hit);assert.ok(calls>0);assert.ok(controller.active('driver').group.position.z<8);
+});
+
 test('night actually changes sky, lamp illumination, moon and stars in the scene',()=>{
   const scene=new THREE.Scene();scene.fog=new THREE.Fog(0xadcbd1,45,115);
   const sky=new THREE.Mesh(new THREE.SphereGeometry(1),new THREE.ShaderMaterial({uniforms:{daylight:{value:1}}}));

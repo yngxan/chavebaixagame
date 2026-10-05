@@ -5,14 +5,21 @@
   const plazaSurfaces = [
     { x: 0, z: 0, hx: LowkeyCityLayout.MAP_HALF_SIZE, hz: LowkeyCityLayout.MAP_HALF_SIZE, y: -.05, ground: true },
     ...LowkeyCityLayout.surfaces,
+    ...LowkeyCityLayout.islandSurfaces,
+    ...LowkeyCityLayout.expansionSurfaces,
+    ...LowkeyCityLayout.bridgeSurfaces,
     ...LowkeyCityLayout.entrances,
     ...LowkeyCityLayout.coast.surfaces,
+    ...(LowkeyCityLayout.interiorPlatforms||[]),
+    ...(LowkeyCityLayout.elevatedPlatforms||[]),
+    ...LowkeyCityLayout.festivalPlatforms,
     { x: 0, z: 0, hx: 8, hz: 24, y: .045, ground: true },
     { x: 0, z: 0, hx: 6.5, hz: 14, y: .1, ground: true },
     { x: 0, z: 0, hx: 13, hz: 9, y: .1, ground: true },
     { x: 0, z: 0, hx: 11, hz: 7, y: .18, ground: true },
   ];
   function contains(surface, x, z, padding = 0) {
+    if(surface.polygon)return Math.abs(x-surface.x)<=surface.hx&&Math.abs(z-surface.z)<=surface.hz&&LowkeyCityLayout.pointInPolygon(x,z,surface.polygon);
     const dx = x - surface.x, dz = z - surface.z;
     const c = Math.cos(surface.rot || 0), s = Math.sin(surface.rot || 0);
     return Math.abs(dx * c - dz * s) <= surface.hx - padding &&
@@ -20,8 +27,8 @@
   }
   function supportHeight(surfaces, x, z, maximumY = Infinity, padding = 0) {
     let height = null;
-    for (const surface of surfaces) if (surface.y <= maximumY && contains(surface, x, z, surface.ground ? 0 : padding)) {
-      height = Math.max(height ?? -Infinity, surface.y);
+    for (const surface of surfaces) if (contains(surface, x, z, surface.ground ? 0 : padding)) {
+      const y=LowkeyCityLayout.surfaceHeight(surface,x,z);if(y<=maximumY)height = Math.max(height ?? -Infinity, y);
     }
     return height;
   }

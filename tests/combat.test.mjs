@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import vm from 'node:vm';
+const threeContext=vm.createContext({console:{warn(){}}});vm.runInContext(await readFile(new URL('../three.min.js',import.meta.url),'utf8'),threeContext);const THREE=threeContext.THREE;
 
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 const server=await readFile(new URL('../server.mjs',import.meta.url),'utf8');
@@ -30,13 +32,13 @@ test('camera can look vertically up and down without flipping',()=>{
 });
 
 test('first-person fist extends forward and returns to its resting position',()=>{
-  const hand=joint();hand.position.set=function(x,y,z){Object.assign(this,{x,y,z});};hand.scale={setScalar(value){this.value=value;}};hand.userData.ball={visible:false};const camera={aspect:16/9};
+  const hand=new THREE.Group();for(const name of ['ball','normalHand','weaponRig','glock'])hand.userData[name]=new THREE.Group();const sleeve=new THREE.Group();sleeve.userData.length=.4;hand.userData.support={sleeve,palm:new THREE.Group(),thumb:new THREE.Group()};const camera={aspect:16/9};
   const action={kind:'punch',startedAt:0,until:520};
-  const update=loadFunction(html,'updateFirstPersonHand',{firstPersonHand:hand,localCombat:action,combatPoseAt:poseAt,walkTime:0,currentMoveSpeed:0,camera});
-  update(218,true);assert.ok(hand.position.z<-.8);assert.ok(hand.position.y>-.22);assert.equal(hand.visible,true);
-  update(520,true);assert.equal(hand.position.x,.34);assert.equal(hand.position.y,-.32);assert.equal(hand.position.z,-.62);
+  const update=loadFunction(html,'updateFirstPersonHand',{THREE,firstPersonHand:hand,localCombat:action,combatPoseAt:poseAt,walkTime:0,currentMoveSpeed:0,camera,glockReloading:false,glockEquipped:false,selectedWeapon:'punch',weaponSwitchUntil:0});
+  update(218,true);assert.ok(hand.position.z<-.95);assert.ok(hand.position.y>-.39);assert.equal(hand.visible,true);
+  update(520,true);assert.equal(hand.position.x,.47);assert.equal(hand.position.y,-.39);assert.equal(hand.position.z,-.88);
   update(520,false);assert.equal(hand.visible,false);
-  camera.aspect=390/844;update(520,true);assert.ok(hand.position.x<.12);assert.equal(hand.scale.value,.55);
+  camera.aspect=390/844;update(520,true);assert.ok(hand.position.x<.15);assert.equal(hand.scale.x,.5);
 });
 
 test('both action cycles stay bounded, continuous and return to neutral',()=>{
@@ -63,8 +65,8 @@ test('finishing an attack restores the hand and removes all combat offsets',()=>
   const reset=loadFunction(html,'resetCombatPose',{resetSmokingArmPose:resetSmoking});
   const apply=loadFunction(html,'applyCombatPose',{resetCombatPose:reset,combatPoseAt:poseAt});
   for(const kind of ['punch','snowball']){
-    const action={kind,startedAt:0,until:680};body.rotation.y=4;
-    assert.equal(apply(arms,action,200,body),true);assert.equal(body.rotation.y,0);
+    const action={kind,startedAt:0,until:680,firstPerson:true};body.rotation.y=4;
+    assert.equal(apply(arms,action,90,body),true);assert.equal(body.rotation.y,0);
     assert.equal(arms[1].userData.fist.visible,true);
     assert.equal(arms[1].userData.snowball.visible,kind==='snowball');
     assert.equal(apply(arms,action,680,body),false);

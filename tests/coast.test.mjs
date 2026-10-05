@@ -8,8 +8,8 @@ import '../motion-sync.js';
 const city=LowkeyCityLayout,world=LowkeyWorld,motion=LowkeyMotion;
 
 test('island coast has shared support heights and no invisible ocean floor',()=>{
-  assert.equal(city.bounds.minZ,-210);assert.equal(city.bounds.maxZ,340);
-  for(const [x,z,y] of [[0,120,.12],[40,125,.12],[40,160,-.05],[0,156,.12],[0,172,1.4],[0,200,1.4],[30,225,1.4],[0,265,1.4],[90,225,null],[0,275,null]]){
+  assert.equal(city.bounds.minZ,-585);assert.equal(city.bounds.maxZ,350);
+  for(const [x,z,y] of [[0,120,.12],[40,125,.12],[40,160,-.05],[0,156,.12],[0,172,1.4],[0,200,1.4],[30,225,1.4],[0,265,1.4],[90,225,null],[30,275,null]]){
     assert.equal(world.groundHeight(x,z),y,`server floor ${x},${z}`);assert.equal(motion.supportHeight(motion.plazaSurfaces,x,z),y,`client floor ${x},${z}`);
   }
   for(let x=-119.5;x<120;x+=4.4)for(let z=120;z<280;z+=2.3)assert.equal(world.groundHeight(x,z),motion.supportHeight(motion.plazaSurfaces,x,z));
@@ -18,17 +18,17 @@ test('island coast has shared support heights and no invisible ocean floor',()=>
 
 test('ocean surrounds all sides; buoyancy follows synchronized waves without a fake floor',()=>{
   const now=1770000123456;
-  for(const [x,z] of [[-170,0],[170,0],[0,-170],[90,240]]){
+  for(const [x,z] of [[-138,0],[175,0],[0,-400],[90,240]]){
     assert.equal(world.groundHeight(x,z),null);assert.equal(world.waterAt({x,y:0,z}),true);
     const position={x,y:-.5,z};for(let i=0;i<300;i++)assert.equal(world.advanceSwimmer(position,0,0,1/60,now+i*1000/60),true);
     const height=world.waterHeight(x,z,now+299*1000/60);assert.ok(Math.abs(position.y-(height-1.27))<.08);assert.equal(world.isSwimming(position,now+5000),true);
     assert.equal(world.clearAt(x,z,.5),false,'vehicles cannot drive on water');
   }
-  for(const [x,z] of [[127,0],[-127,0],[0,-127]])assert.equal(world.groundHeight(x,z),-.05);
+  for(const [x,z] of [[135,0],[-127,0],[0,-127]])assert.equal(world.groundHeight(x,z),-.05);
   const exiting={x:135,y:-1.65,z:50};assert.equal(world.advanceSwimmer(exiting,-2,0,.04,now),false);assert.equal(exiting.y,-.05);
   assert.equal(world.isSwimming({x:0,y:1.4,z:220},now),false,'standing on pier');
   assert.equal(world.isSwimming({x:0,y:-1.6,z:220},now),true,'water below pier');
-  const bounds={x:209,y:-1.65,z:0};world.advanceSwimmer(bounds,10,0,.04,now);assert.ok(bounds.x<=208.5);
+  const bounds={x:239,y:-1.65,z:0};world.advanceSwimmer(bounds,10,0,.04,now);assert.ok(bounds.x<=238.5);
 });
 
 test('swimming pose is animated and motion buffers retain its discrete state',()=>{
@@ -39,7 +39,7 @@ test('swimming pose is animated and motion buffers retain its discrete state',()
 });
 
 test('actual movement and landing code walks from the city up the ramp and across the pier',async()=>{
-  const html=await readFile(new URL('../index.html',import.meta.url),'utf8'),sandbox=vm.createContext({LowkeyMotion:motion,avatar:{position:{x:0,y:.12,z:125}},solidPlatforms:motion.plazaSurfaces,solidObstacles:city.obstacles.map(o=>({...o,type:o.r===undefined?'localbox':'circle'})),vehicleObstacles:[],PLAYER_COLLISION_RADIUS:.32,PLAYER_FEET_OFFSET:0,velocityY:0,onGround:true,lastLandingAt:0,performance:{now:()=>0}});
+  const html=await readFile(new URL('../index.html',import.meta.url),'utf8'),sandbox=vm.createContext({LowkeyCityLayout:city,LowkeyMotion:motion,avatar:{position:{x:0,y:.12,z:125}},solidPlatforms:motion.plazaSurfaces,solidObstacles:city.obstacles.map(o=>({...o,type:o.r===undefined?'localbox':'circle'})),vehicleObstacles:[],PLAYER_COLLISION_RADIUS:.32,PLAYER_FEET_OFFSET:0,velocityY:0,onGround:true,lastLandingAt:0,performance:{now:()=>0}});
   vm.runInContext(html.slice(html.indexOf('  function resolveWorldCollision('),html.indexOf('  function applyIdleBreath(')),sandbox);
   for(let i=0;i<1400;i++){
     vm.runInContext('{moveWithWorldCollision(avatar.position,0,.1);tryStepUp();const previousY=avatar.position.y;velocityY-=20/60;avatar.position.y+=velocityY/60;if(!resolvePlatformLanding(previousY))onGround=false;}',sandbox);
@@ -50,7 +50,9 @@ test('actual movement and landing code walks from the city up the ramp and acros
 });
 
 test('rides, kiosks and guardrails block entry while the park path stays open',()=>{
-  for(const [x,z] of [[-23,240],[36,224],[0,271]])assert.equal(world.clearAt(x,z,.32),false);
+  for(const [x,z] of [[-23,240],[84,224],[4.5,271]])assert.equal(world.clearAt(x,z,.32),false);
+  assert.equal(world.clearAt(36,224,.32),true,'expanded pier wing has no old phantom side rail');
+  assert.equal(world.clearAt(0,271,.32),true,'marina gate is open');
   for(const [x,z] of [[-18,223],[16,220]])assert.equal(world.clearAt(x,z,.32),true,'empty space below a ride is walkable');
   for(const [x,y,z] of city.coast.trackSupports)assert.equal(world.clearAt(x,z,.32),false,'visible track column blocks movement');
   for(const z of [125,156,171,180,201,214,224,240,260])assert.equal(world.clearAt(0,z,.32),true,`open center route at ${z}`);
@@ -60,10 +62,10 @@ test('rides, kiosks and guardrails block entry while the park path stays open',(
 
 test('coast renders bounded detail batches; animation stays upright, finite and server-clock synchronized',async()=>{
   const sandbox=vm.createContext({console:{warn(){},log(){}}});
-  for(const file of ['three.min.js','city-layout.js','coast-client.js'])vm.runInContext(await readFile(new URL('../'+file,import.meta.url),'utf8'),sandbox);
+  for(const file of ['three.min.js','city-layout.js','world-systems.js','coast-client.js'])vm.runInContext(await readFile(new URL('../'+file,import.meta.url),'utf8'),sandbox);
   const THREE=sandbox.THREE,controller=sandbox.LowkeyCoast.create({THREE,scene:new THREE.Scene(),signMaterial:()=>new THREE.MeshBasicMaterial()});
   assert.ok(controller.instanceCount>500);assert.ok(controller.batchCount<60);assert.equal(controller.cabins.length,16);assert.equal(controller.lights.length,3);
-  const time=1770000123456;controller.update(0,{x:0,z:224},1000,time);assert.ok(Math.abs(controller.wheelRig.rotation.z+controller.cabins[0].rotation.z)<1e-8);
+  const time=1770000132456;controller.update(0,{x:0,z:224},1000,time);assert.ok(Math.abs(controller.wheelRig.rotation.z+controller.cabins[0].rotation.z)<1e-8);
   const previous=controller.train[0].position.clone();controller.update(1,{x:0,z:235},1400,time+500);assert.ok(previous.distanceTo(controller.train[0].position)>.1);assert.ok(controller.lights.some(l=>l.intensity>0));
   const angle=controller.wheelRig.rotation.z;controller.update(1,{x:0,z:235},2000,time+500);assert.equal(controller.wheelRig.rotation.z,angle,'render clock alone does not desynchronize rides');
   for(const car of controller.train)assert.ok([...car.position.toArray(),...car.quaternion.toArray()].every(Number.isFinite));

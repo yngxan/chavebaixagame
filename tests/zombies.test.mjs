@@ -6,7 +6,7 @@ import {createZombiesGame} from '../zombies-server.mjs';
 import '../city-layout.js';
 import '../world-systems.js';
 
-function fixture(){let now=10000,seed=812;const events=[],players=new Map([['p',{id:'p',health:100,position:{x:0,y:.18,z:5}}]]);let restored=0,hits=0;
+function fixture(){let now=10000,seed=812;const events=[],players=new Map([['p',{id:'p',health:100,position:{x:0,y:.18,z:75}}]]);let restored=0,hits=0;
   const game=createZombiesGame({world:LowkeyWorld,players,clock:()=>now,random:()=>{seed=(seed*1664525+1013904223)>>>0;return seed/4294967296;},broadcast:e=>events.push(e),restorePlayers:()=>restored++,damagePlayer:(p,damage)=>{hits++;p.health=Math.max(0,p.health-damage);}});
   return {game,events,players,advance(ms){now+=ms;game.tick();},get now(){return now;},get restored(){return restored;},get hits(){return hits;}};
 }
@@ -21,11 +21,16 @@ test('rounds spawn varied ground enemies, reject premature hits and advance only
   f.advance(5499);assert.equal(f.game.snapshot().state.round,1);f.advance(1);assert.equal(f.game.snapshot().state.round,2);assert.equal(f.game.snapshot().state.total,10);
 });
 test('server attacks obey emergence, walls, attack cooldown and game-over cleanup',()=>{
-  const f=fixture();f.game.start('owner');f.advance(1);const z=[...f.game.zombies.values()][0];z.position={x:0,y:.18,z:6};
+  const f=fixture();f.game.start('owner');f.advance(1);const z=[...f.game.zombies.values()][0];z.position={x:0,y:.18,z:76};
   f.advance(1000);assert.equal(f.hits,0);f.advance(650);assert.equal(f.hits,1);f.advance(50);assert.equal(f.hits,1);
   f.players.get('p').position={x:0,y:0,z:-18.5};z.position={x:0,y:0,z:-21};f.advance(1200);assert.equal(f.hits,1,'stage wall blocks attacks');
   f.players.get('p').health=0;f.advance(50);assert.equal(f.game.active,false);assert.equal(f.game.zombies.size,0);
   f.game.start('owner');f.players.clear();f.advance(50);assert.equal(f.game.active,false);
+});
+
+test('expanded plaza stays safe and zombies spawn around active players outside it, not inside old fixed bounds',()=>{
+  const f=fixture(),p=f.players.get('p');p.position={x:0,y:.18,z:5};f.game.start('owner');for(let i=0;i<20;i++)f.advance(450);assert.ok(f.game.zombies.size>0);for(const z of f.game.zombies.values())assert.equal(LowkeyCityLayout.inSafeZone(z.position),false);assert.equal(f.hits,0);
+  p.position={x:-350,y:LowkeyWorld.groundHeight(-350,92),z:92};for(let i=0;i<15;i++)f.advance(450);assert.equal(f.hits,0);f.game.stop();f.game.start('owner');for(let i=0;i<20;i++)f.advance(450);assert.ok([...f.game.zombies.values()].some(z=>z.position.x<-300),'western island supports the mode too');
 });
 test('client renders emergence, compact movement, hits and reconnect snapshots without leaking enemies',async()=>{
   let now=0;const hud={hidden:true,textContent:''},sandbox=vm.createContext({performance:{now:()=>now},console});

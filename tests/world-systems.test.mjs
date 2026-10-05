@@ -59,7 +59,7 @@ test('day/night alternates every fifteen minutes, stays synchronized after resta
 });
 
 test('both vehicles accelerate, steer, brake, reverse and obey boundaries without tunneling',()=>{
-  for(const vehicle of world.initialVehicles()) {
+  for(const vehicle of world.initialVehicles().filter(v=>!world.isWatercraft(v))) {
     vehicle.x=0;vehicle.z=20;vehicle.rotation=0;
     for(let i=0;i<30;i++)world.advanceVehicle(vehicle,{throttle:1,steer:0},1/60,[]);
     assert.ok(vehicle.speed>4);assert.ok(vehicle.z>21);
@@ -73,14 +73,14 @@ test('both vehicles accelerate, steer, brake, reverse and obey boundaries withou
     vehicle.x=0;vehicle.z=0;vehicle.rotation=0;vehicle.speed=20;
     world.advanceVehicle(vehicle,{throttle:1},.05,[{x:0,z:1.3,hx:2,hz:.2}]);
     assert.equal(vehicle.speed,0);assert.ok(vehicle.z<1.1,'substeps stop before prop');
-    vehicle.x=132;vehicle.z=20;vehicle.rotation=Math.PI/2;vehicle.speed=27;
+    vehicle.x=159;vehicle.z=20;vehicle.rotation=Math.PI/2;vehicle.speed=27;
     for(let i=0;i<30;i++)world.advanceVehicle(vehicle,{throttle:1},1/60,[]);
-    assert.ok(vehicle.x<=134);assert.equal(vehicle.speed,0);assert.notEqual(world.groundHeight(vehicle.x,vehicle.z),null);
+    assert.ok(vehicle.x<=163);assert.equal(vehicle.speed,0);assert.notEqual(world.groundHeight(vehicle.x,vehicle.z),null);
   }
 });
 
 test('A and D turn left and right from every heading, with natural reverse steering',()=>{
-  for(const base of world.initialVehicles())for(const heading of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const steer of [-1,1])for(const speed of [8,-4]){
+  for(const base of world.initialVehicles().filter(v=>!world.isWatercraft(v)))for(const heading of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const steer of [-1,1])for(const speed of [8,-4]){
     const vehicle={...base,x:0,z:20,rotation:heading,speed};
     world.advanceVehicle(vehicle,{steer},1/60,[]);
     const turn=Math.atan2(Math.sin(vehicle.rotation-heading),Math.cos(vehicle.rotation-heading));
@@ -89,7 +89,7 @@ test('A and D turn left and right from every heading, with natural reverse steer
 });
 
 test('steering eases in, recenters and stays controllable at top speed',()=>{
-  for(const base of world.initialVehicles()){
+  for(const base of world.initialVehicles().filter(v=>!world.isWatercraft(v))){
     const vehicle={...base,x:0,z:20,rotation:0,speed:base.kind==='car'?22:27};
     world.advanceVehicle(vehicle,{throttle:1,steer:1},1/60,[]);
     assert.ok(vehicle.steering>0&&vehicle.steering<.2,'no instant full steering lock');
@@ -121,6 +121,7 @@ test('seat poses and safe exits follow vehicle direction and floor height',()=>{
 test('road and plaza have no duplicate coplanar upper slabs',async()=>{
   const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
   assert.ok(!html.includes('box(scene,0,.06,0,13,.08,28,mats.stone2)'));
-  assert.ok(html.includes('for(const z of [-11.5,11.5])'));
+  assert.ok(html.includes('festivalApron.y-.05'));
+  assert.ok(!html.includes('box(scene,0,.12,0,22,.12,14'));
   for(const scriptName of ['city-layout.js','world-systems.js','environment.js','vehicles-client.js'])new vm.Script(await readFile(new URL('../'+scriptName,import.meta.url),'utf8'));
 });

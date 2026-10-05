@@ -9,12 +9,14 @@ import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import '../city-layout.js';
 import '../world-systems.js';
+import {addTestVehicles} from './vehicle-fixture.mjs';
 
 test('vehicles are shared, proximity-checked, server-driven and freed on disconnect', {timeout:45000}, async()=>{
   const fixture=await mkdtemp(join(tmpdir(),'lowkey-vehicle-test-'));
   const reservation=createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');
   const port=reservation.address().port;await new Promise(done=>reservation.close(done));
-  for(const file of ['server.mjs','city-layout.js','world-systems.js','zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+for(const file of ['server.mjs','city-layout.js','world-systems.js','zombies-server.mjs','game-security.mjs','weapons.js','weapons-server.mjs','social-server.mjs','missions-server.mjs','police-server.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+  await addTestVehicles(fixture);
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   const base=`http://127.0.0.1:${port}`,streams=[];let logs='';child.stderr.on('data',chunk=>logs+=chunk);
   const post=(cookie,path,data)=>fetch(base+path,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify(data)});
@@ -41,7 +43,7 @@ test('vehicles are shared, proximity-checked, server-driven and freed on disconn
   try{
     let ready=false;child.stdout.on('data',chunk=>{if(String(chunk).includes('multiplayer pronta'))ready=true;});await waitFor(()=>ready);
     const owner=await connect('vehicle_owner'),observer=await connect('vehicle_observer'),thief=await connect('vehicle_hijacker');
-    const initial=await waitFor(()=>latest(owner));assert.equal(initial.vehicles.length,4);assert.equal(initial.segmentMs,900000);
+    const initial=await waitFor(()=>latest(owner));assert.equal(initial.vehicles.length,LowkeyWorld.initialVehicles().length+2);assert.equal(initial.segmentMs,900000);
     const carId='plaza-car',motoId='plaza-moto';
     assert.equal((await post(owner.cookie,'/api/vehicle',{id:owner.id,action:'enter',vehicleId:carId})).status,403);
     await walk(owner,{x:-12,z:5});
@@ -69,13 +71,13 @@ test('vehicles are shared, proximity-checked, server-driven and freed on disconn
     await walk(owner,{x:-12,z:5});
     assert.equal((await post(observer.cookie,'/api/vehicle',{id:observer.id,action:'input',sequence:1,throttle:1,steer:0})).status,403);
     assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'input',sequence:1,throttle:100,steer:0})).status,400);
-    assert.equal((await post(owner.cookie,'/api/combat',{id:owner.id,action:'punch'})).status,200,'the pulled-out driver can act on foot');
+    assert.equal((await post(owner.cookie,'/api/emote',{id:owner.id,emote:'wave'})).status,204,'the pulled-out driver can act on foot');
+    assert.equal((await post(owner.cookie,'/api/combat',{id:owner.id,action:'punch'})).status,409,'the plaza remains a safe zone after ejection');
     const before=latest(thief).vehicles.find(vehicle=>vehicle.id===carId).x;
     for(let i=1;i<=12;i++){assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'input',sequence:i,throttle:1,steer:0})).status,204);await delay(80);}
     const moving=await waitFor(()=>{const vehicle=latest(observer)?.vehicles.find(vehicle=>vehicle.id===carId);return vehicle?.speed>3&&vehicle.x>before+.5&&vehicle;});
     assert.ok(moving.x<0);
-    const impact=await waitFor(()=>owner.events.find(event=>event.type==='vehicle-impact'&&event.targetId===owner.id));assert.ok(impact.impulse.y>=5,'a car impact launches the player into the air');
-    await delay(100);assert.equal(owner.events.filter(event=>event.type==='vehicle-impact'&&event.targetId===owner.id&&event.time===impact.time).length,1,'one collision delivers exactly one impulse');
+    await delay(100);assert.equal(owner.events.some(event=>event.type==='vehicle-impact'&&event.targetId===owner.id),false,'the safe plaza protects its occupants from vehicle damage');
     await post(thief.cookie,'/api/state',{id:thief.id,sequence:10000,position:{x:40,y:18,z:40}});
     assert.equal((await post(thief.cookie,'/api/vehicle',{id:thief.id,action:'exit'})).status,409,'must brake before exiting');
     await delay(1300);

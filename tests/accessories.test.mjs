@@ -15,7 +15,7 @@ test('accessories persist across login and reach another player with legacy defa
   await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));
   await copyFile(new URL('../city-layout.js',import.meta.url),join(fixture,'city-layout.js'));
   await copyFile(new URL('../world-systems.js',import.meta.url),join(fixture,'world-systems.js'));
-  for(const file of ['zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+for(const file of ['zombies-server.mjs','game-security.mjs','weapons.js','weapons-server.mjs','social-server.mjs','missions-server.mjs','police-server.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   const base=`http://127.0.0.1:${port}`,streams=[];
   async function waitFor(predicate){const deadline=Date.now()+4000;while(Date.now()<deadline){const value=predicate();if(value)return value;await delay(10);}throw new Error('Timed out waiting for avatar event');}

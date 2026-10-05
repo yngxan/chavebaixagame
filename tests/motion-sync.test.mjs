@@ -10,15 +10,15 @@ const { MotionBuffer, plazaSurfaces, supportHeight } = context.LowkeyMotion;
 
 test('feet and shadows follow the actual overlapping plaza slabs, grass and island edge', () => {
   assert.equal(supportHeight(plazaSurfaces, 0, 5), .18);
-  assert.equal(supportHeight(plazaSurfaces, 12, 5), .1);
-  assert.equal(supportHeight(plazaSurfaces, 0, 13), .1);
-  assert.equal(supportHeight(plazaSurfaces, 7, 20), .045);
-  assert.equal(supportHeight(plazaSurfaces, 20, 20), -.05);
+  assert.equal(supportHeight(plazaSurfaces, 12, 5), .18);
+  assert.equal(supportHeight(plazaSurfaces, 0, 13), .18);
+  assert.equal(supportHeight(plazaSurfaces, 7, 20), .18);
+  assert.equal(supportHeight(plazaSurfaces, 20, 20), .18);
   assert.equal(supportHeight(plazaSurfaces, 121, 0), -.05);
-  assert.equal(supportHeight(plazaSurfaces, 135, 0), null);
-  const surfaces = [...plazaSurfaces, {x:0, z:-11.7, hx:6.7, hz:3.35, y:1.15}];
-  assert.equal(supportHeight(surfaces, 0, -11.7, .2), .1, 'do not snap a player below the stage onto its roof');
-  assert.equal(supportHeight(surfaces, 0, -11.7, 1.2), 1.15);
+  assert.equal(supportHeight(plazaSurfaces, 135, 0), -.05);assert.equal(supportHeight(plazaSurfaces,175,0),null);
+  const {festival}=context.LowkeyCityLayout;
+  assert.equal(supportHeight(plazaSurfaces, 0, festival.z, .2), .18, 'do not snap a player below the stage onto its roof');
+  assert.equal(supportHeight(plazaSurfaces, 0, festival.z, 1.5), festival.y);
 });
 
 test('bursty 20Hz updates and dropped packets remain continuous at rendering frame rate', () => {
@@ -67,7 +67,7 @@ test('all inline browser scripts compile after the physics and rendering edits',
 
 test('actual landing and stepping code settles on the plaza, descends onto grass and falls off the island', async()=>{
   const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
-  const sandbox=vm.createContext({LowkeyMotion:context.LowkeyMotion,avatar:{position:{x:0,y:18,z:5}},solidPlatforms:plazaSurfaces,
+  const sandbox=vm.createContext({LowkeyCityLayout:context.LowkeyCityLayout,LowkeyMotion:context.LowkeyMotion,avatar:{position:{x:0,y:18,z:5}},solidPlatforms:plazaSurfaces,
     PLAYER_COLLISION_RADIUS:.32,velocityY:0,onGround:false,lastLandingAt:0,performance:{now:()=>0}});
   const source=html.slice(html.indexOf('  function insidePlatform('),html.indexOf('  function applyIdleBreath('));
   vm.runInContext(source,sandbox);
@@ -77,11 +77,11 @@ test('actual landing and stepping code settles on the plaza, descends onto grass
   assert.equal(sandbox.avatar.position.y,.18);assert.equal(sandbox.onGround,true);
   sandbox.avatar.position.x=11.05;
   for(let i=0;i<30;i++)step();
-  assert.equal(sandbox.avatar.position.y,.1);assert.equal(sandbox.onGround,true,'floor borders must not leave player permanently airborne');
-  sandbox.avatar.position.x=20;sandbox.avatar.position.z=20;
+  assert.equal(sandbox.avatar.position.y,.18);assert.equal(sandbox.onGround,true,'festival apron stays continuous');
+  sandbox.avatar.position.x=25;sandbox.avatar.position.z=20;
   for(let i=0;i<30;i++)step();
   assert.equal(sandbox.avatar.position.y,-.05);assert.equal(sandbox.onGround,true);
-  sandbox.avatar.position.x=135;
+  sandbox.avatar.position.x=175;
   for(let i=0;i<30;i++)step();
   assert.ok(sandbox.avatar.position.y<-1);assert.equal(sandbox.onGround,false);
 });

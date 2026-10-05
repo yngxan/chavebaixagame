@@ -1,5 +1,5 @@
 (() => {
-  function create({THREE,scene,box,mats}) {
+  function create({THREE,scene,box,mats,getExternalVehicles=()=>[]}) {
     const models=new Map(),rubber=new THREE.MeshStandardMaterial({color:0x16191d,roughness:.95}),chrome=new THREE.MeshStandardMaterial({color:0xb9c3ce,metalness:.7,roughness:.3});
     const glass=new THREE.MeshStandardMaterial({color:0x152129,roughness:.18,metalness:.35});
     const trim=new THREE.MeshStandardMaterial({color:0x252b33,roughness:.55,metalness:.25}),seatMaterial=new THREE.MeshStandardMaterial({color:0x343d49,roughness:.9});
@@ -42,7 +42,7 @@
         box(group,0,.70,-1.765,.34,.09,.012,chrome,{cast:false});box(group,-.59,.48,-1.77,.15,.08,.15,chrome);
         for(const x of [-.40,.40]){box(group,x,.59,-.12,.52,.15,.57,seatMaterial);const back=box(group,x,.87,-.42,.52,.48,.12,seatMaterial);back.rotation.x=-.1;box(group,x,1.15,-.44,.27,.17,.13,seatMaterial);}
         box(group,0,.97,.39,1.36,.13,.23,trim);const steering=new THREE.Mesh(new THREE.TorusGeometry(.14,.027,6,12),trim);steering.position.set(.32,1.08,.26);steering.rotation.x=-.35;group.add(steering);
-      } else {
+      } else if(state.kind==='moto') {
         wheel(0,-.85,.36,.16,false);wheel(0,.9,.36,.16,true);
         box(group,0,.56,-.04,.22,.16,1.65,trim);
         const tank=box(group,0,.89,.21,.45,.30,.62,paint);tank.rotation.x=.12;
@@ -63,6 +63,24 @@
         box(group,0,.80,-.95,.22,.075,.035,rearLamp,{cast:false});box(group,0,.63,-1.04,.16,.14,.025,chrome,{cast:false});
         for(const x of [-.26,.26]){box(group,x,.42,-.2,.18,.045,.08,trim);box(group,x,.46,-.63,.14,.035,.07,trim);}
         box(group,.27,.43,-.49,.13,.13,.75,chrome);box(group,.27,.43,-.88,.08,.08,.04,rubber);
+      } else {
+        const boat=state.kind==='boat',width=boat?3.0:.95,length=boat?6.6:2.65;
+        // Faceted bow and tapered underside share the same footprint as hull probes.
+        const shape=new THREE.Shape();shape.moveTo(-width*.43,-length*.5);shape.lineTo(width*.43,-length*.5);shape.lineTo(width*.5,length*.12);shape.lineTo(width*.30,length*.39);shape.lineTo(0,length*.5);shape.lineTo(-width*.30,length*.39);shape.lineTo(-width*.5,length*.12);shape.closePath();
+        const geometry=new THREE.ExtrudeGeometry(shape,{depth:boat?.48:.28,bevelEnabled:true,bevelSegments:1,bevelSize:boat?.12:.06,bevelThickness:.08,steps:1});geometry.userData.vehicleOwned=true;geometry.rotateX(Math.PI/2);const hull=new THREE.Mesh(geometry,paint);hull.position.y=boat?.48:.27;hull.castShadow=true;hull.receiveShadow=true;group.add(hull);
+        if(boat){
+          panel(0,.43,-.22,2.66,.12,5.7,2.62,5.65,chrome);
+          for(const x of [-1.35,1.35])box(group,x,.73,-.55,.13,.53,4.8,paint);
+          panel(0,.81,1.45,2.62,.46,1.20,2.35,.94);panel(0,1.24,1.02,2.24,.51,.11,1.98,.09,glass);
+          box(group,.57,.93,.68,.51,.38,.36,trim);const helm=new THREE.Mesh(new THREE.TorusGeometry(.17,.028,6,12),chrome);helm.position.set(.55,1.13,.54);helm.rotation.x=-.6;group.add(helm);
+          for(const x of [-.75,.75]){box(group,x,.65,.7,.60,.14,.7,seatMaterial);box(group,x,.93,.27,.6,.58,.13,seatMaterial);box(group,x,.63,-1.50,.62,.16,2.25,seatMaterial);box(group,x*1.49,.96,-1.5,.12,.52,2.25,seatMaterial);}
+          box(group,0,.73,-3.05,2.25,.14,.44,paint);for(const x of [-.67,.67]){box(group,x,.31,-3.43,.41,.58,.5,trim);box(group,x,-.18,-3.53,.12,.46,.21,chrome);}
+          for(const x of [-1.07,1.07])box(group,x,1.1,2.0,.045,.13,1.2,chrome);
+        }else{
+          panel(0,.47,.60,.85,.50,1.15,.50,.75);box(group,0,.55,-.36,.46,.19,1.19,seatMaterial);box(group,0,.89,.30,.72,.065,.07,chrome);
+          for(const x of [-.31,.31])box(group,x,.89,.30,.18,.10,.09,rubber);const screen=panel(0,.85,.72,.40,.24,.065,.30,.045,glass);screen.rotation.x=-.28;
+          for(const x of [-.47,.47])box(group,x,.24,-.25,.13,.06,1.7,trim);box(group,0,.17,-1.34,.24,.13,.13,chrome);
+        }
       }
       const headlight=new THREE.PointLight(0xffdfa5,0,10,2);headlight.position.set(0,.90,state.kind==='car'?2:1.2);group.add(headlight);
       group.position.set(state.x,state.y,state.z);group.rotation.y=state.rotation;
@@ -85,17 +103,19 @@
       const focus=localPosition||active(localId)?.group.position||new THREE.Vector3(),lit=new Set([...models.values()].filter(m=>m.group.position.distanceTo(focus)<28).sort((a,b)=>a.group.position.distanceToSquared(focus)-b.group.position.distanceToSquared(focus)).slice(0,4).map(m=>m.state.id));
       let collisionStates=null;
       for(const model of models.values()) {
-        const owned=localId&&model.state.driverId===localId;
+        const owned=localId&&model.state.driverId===localId;model.owned=Boolean(owned);
         let pose;
         if(owned) {
           // Only the driver's vehicle runs physics. Remote vehicles just interpolate.
-          collisionStates ||= [...models.values()].map(other=>other.state);
-          const obstacles=LowkeyWorld.vehicleObstacles(model.state,collisionStates),controls=model.state.wrecked||model.state.hijacking?{throttle:0,steer:0,brake:true}:input;
+          collisionStates ||= [...models.values()].map(other=>other.state).concat(getExternalVehicles());
+          const obstacles=LowkeyWorld.vehicleObstacles(model.state,collisionStates),controls={...(model.state.wrecked||model.state.hijacking?{throttle:0,steer:0,brake:true}:input),serverTime:serverNow};
           if(model.pending) {
             const expected=model.pending,age=Math.min(.3,Math.max(0,(serverNow-model.authoritativeAt)/1000)),steps=Math.ceil(age/.025);
             for(let i=0;i<steps;i++){LowkeyWorld.advanceVehicle(expected,controls,age/steps,obstacles);if(expected.collision)break;}
             if(Math.hypot(model.predicted.x-expected.x,model.predicted.z-expected.z)>4||model.predicted.driverId!==expected.driverId||model.state.hijacking||model.state.wrecked){model.predicted={...expected};model.correction=null;}
             else model.correction={x:expected.x-model.predicted.x,z:expected.z-model.predicted.z,rotation:Math.atan2(Math.sin(expected.rotation-model.predicted.rotation),Math.cos(expected.rotation-model.predicted.rotation))};
+            if(Boolean(model.predicted.airborne)!==Boolean(expected.airborne)||Math.abs(model.predicted.y-expected.y)>1){model.predicted.y=expected.y;}
+            for(const key of ['airborne','airVelocityX','airVelocityY','airVelocityZ','airPitch','airTime','rampCooldown'])model.predicted[key]=expected[key];
             model.predicted.speed=expected.speed;model.predicted.steering=expected.steering;model.predicted.wheelieAngle=expected.wheelieAngle;model.pending=null;
           }
           const steps=Math.max(1,Math.ceil(dt/.025));
@@ -104,10 +124,12 @@
           pose=model.predicted;
         } else {pose=model.motion.sample(now,dt)||model.state;model.pending=null;}
         model.wheelieAngle=THREE.MathUtils.damp(model.wheelieAngle||0,(owned?model.predicted.wheelieAngle:model.state.wheelieAngle)||0,18,dt);
-        const frame=LowkeyWorld.vehicleFrame({...model.state,x:pose.x,y:pose.y,z:pose.z,rotation:pose.rotation,wheelieAngle:model.wheelieAngle});
+        const frame=LowkeyWorld.vehicleFrame({...model.state,x:pose.x,y:pose.y,z:pose.z,rotation:pose.rotation,wheelieAngle:model.wheelieAngle,airborne:owned?model.predicted.airborne:model.state.airborne,airPitch:owned?model.predicted.airPitch:model.state.airPitch});
+        const watercraft=LowkeyWorld.isWatercraft(model.state);if(watercraft)frame.y=LowkeyWorld.waterHeight(frame.x,frame.z,serverNow);
         model.group.position.set(frame.x,frame.y,frame.z);model.group.rotation.order='YXZ';model.group.rotation.x=frame.pitch;model.group.rotation.y=pose.rotation;
         const speed=owned?model.predicted.speed:model.state.speed,steer=(owned?model.predicted.steering:model.state.steering)||0;
-        model.group.rotation.z=THREE.MathUtils.damp(model.group.rotation.z,model.state.kind==='moto'?Math.max(-.24,Math.min(.24,steer*speed*.013)):0,8,dt);
+        if(watercraft)model.group.rotation.x=Math.sin(serverNow*.0015+pose.z*.1)*.025+Math.min(.08,Math.abs(speed)*.004);
+        model.group.rotation.z=THREE.MathUtils.damp(model.group.rotation.z,model.state.kind==='moto'||watercraft?Math.max(-.24,Math.min(.24,steer*speed*.013)):0,8,dt);
         if(model.doorPivot){const progress=model.state.hijacking?Math.max(0,Math.min(1,(serverNow-model.state.hijacking.startedAt)/LowkeyWorld.HIJACK_MS)):0,open=model.state.wrecked?.35:model.state.hijacking?Math.min(1,progress/.28)*Math.min(1,(1-progress)/.12)*1.05:0;model.doorPivot.rotation.y=THREE.MathUtils.damp(model.doorPivot.rotation.y,-open,18,dt);model.group.rotation.x=THREE.MathUtils.damp(model.group.rotation.x,model.state.wrecked?.08:0,5,dt);}
         model.wheelAngle+=speed*dt/(model.state.kind==='car'?.41:.36);
         for(const wheel of model.wheels){wheel.rotation.x=model.wheelAngle;wheel.rotation.y=model.frontWheels.includes(wheel)?-steer*.35:0;}
@@ -116,8 +138,8 @@
     }
     function active(id){if(!id)return null;return [...models.values()].find(model=>model.state.driverId===id||(model.state.passengerIds||[]).includes(id))||null;}
     function isDriver(id,model){return Boolean(id&&model?.state.driverId===id);}
-    function canBoard(model){return Boolean(model&&!model.state.wrecked&&!model.state.hijacking&&(!model.state.driverId||(model.state.passengerIds||[]).length<1));}
-    function renderedState(model){const frame=LowkeyWorld.vehicleFrame({...model.state,x:0,y:0,z:0,rotation:model.group.rotation.y,wheelieAngle:model.wheelieAngle});return {...model.state,x:model.group.position.x-frame.x,y:model.group.position.y-frame.y,z:model.group.position.z-frame.z,rotation:model.group.rotation.y,wheelieAngle:model.wheelieAngle};}
+    function canBoard(model){return Boolean(model&&!model.state.wrecked&&!model.state.hijacking&&(!model.state.driverId||(model.state.passengerIds||[]).length<LowkeyWorld.passengerCapacity(model.state)));}
+    function renderedState(model){const airPitch=-model.group.rotation.x,airborne=Boolean(model.owned?model.predicted.airborne:model.state.airborne),frame=LowkeyWorld.vehicleFrame({...model.state,x:0,y:0,z:0,rotation:model.group.rotation.y,wheelieAngle:model.wheelieAngle,airborne,airPitch});return {...model.state,x:model.group.position.x-frame.x,y:model.group.position.y-frame.y,z:model.group.position.z-frame.z,rotation:model.group.rotation.y,wheelieAngle:model.wheelieAngle,airborne,airPitch};}
     function driverPose(model){return LowkeyWorld.driverPose(renderedState(model));}
     function passengerPose(model,seat=0){return LowkeyWorld.passengerPose(renderedState(model),seat);}
     function interaction(model,position){return LowkeyWorld.vehicleInteraction(renderedState(model),position);}

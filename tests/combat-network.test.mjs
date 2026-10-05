@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, copyFile, rm } from 'node:fs/promises';
+import { mkdtemp, copyFile, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -15,7 +15,9 @@ test('punch PvP counts rapid clicks, rejects floods and automatically respawns a
   await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));
   await copyFile(new URL('../city-layout.js',import.meta.url),join(fixture,'city-layout.js'));
   await copyFile(new URL('../world-systems.js',import.meta.url),join(fixture,'world-systems.js'));
-  for(const file of ['zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+for(const file of ['zombies-server.mjs','game-security.mjs','weapons.js','weapons-server.mjs','social-server.mjs','missions-server.mjs','police-server.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+  // Test-only relocation onto a real street outside the enlarged festival safe square.
+  const source=await readFile(join(fixture,'server.mjs'),'utf8');await writeFile(join(fixture,'server.mjs'),source.replace('  const publicApiPaths',`  if(url.pathname==='/test-position'){const p=players.get(url.searchParams.get('id'));if(p)p.position={x:0,y:.18,z:75};return json(response,200,{});}\n  const publicApiPaths`));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   const base=`http://127.0.0.1:${port}`,streams=[];
   async function waitFor(predicate){const deadline=Date.now()+4000;while(Date.now()<deadline){const result=predicate();if(result)return result;await delay(10);}throw new Error('Timed out waiting for combat event');}
@@ -31,8 +33,9 @@ test('punch PvP counts rapid clicks, rejects floods and automatically respawns a
       const hello=await waitFor(()=>events.find(event=>event.type==='hello'));return{cookie,id:hello.id,events};
     }
     const attacker=await player('attacker'),target=await player('target');
-    assert.equal((await post(attacker.cookie,'/api/state',{id:attacker.id,position:{x:0,y:.18,z:5}})).status,204);
-    assert.equal((await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:.18,z:7}})).status,204);
+    for(const p of [attacker,target])await fetch(base+'/test-position?id='+p.id);
+    assert.equal((await post(attacker.cookie,'/api/state',{id:attacker.id,position:{x:0,y:.18,z:75}})).status,204);
+    assert.equal((await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:.18,z:77}})).status,204);
     const attack=(swingId,facing=0)=>post(attacker.cookie,'/api/combat',{id:attacker.id,action:'punch',swingId,facing,pitch:0});
     const before=Date.now();
     for(let id=1;id<=8;id++)assert.equal((await attack(id)).status,200,'rapid clicks must not share a cooldown');
@@ -45,7 +48,7 @@ test('punch PvP counts rapid clicks, rejects floods and automatically respawns a
     assert.ok(impacts[0].time-before<200);
     assert.equal((await attack(1)).status,200,'network retries are idempotent');
     assert.equal((await post(target.cookie,'/api/combat',{id:attacker.id,action:'punch',swingId:9})).status,401);
-    assert.equal((await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:.45,z:8.2},jumping:true})).status,204,'legitimate knockback is accepted by movement protection');
+    assert.equal((await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:.45,z:78.2},jumping:true})).status,204,'legitimate knockback is accepted by movement protection');
     for(let id=9;id<=30;id++)assert.equal((await attack(id,Math.PI)).status,200,'swings facing away miss without blocking the next click');
     await waitFor(()=>attacker.events.filter(event=>event.type==='combat-punch').length===30);
     assert.equal(attacker.events.filter(event=>event.type==='combat-punch').at(-1).targetId,null);
@@ -58,7 +61,7 @@ test('punch PvP counts rapid clicks, rejects floods and automatically respawns a
     assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'snowball',facing:0,pitch:0})).status,429,'snowball retains its separate cooldown');
     assert.equal((await attack(32,Math.PI)).status,200,'a snowball cooldown does not block punching');
     assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'tomato'})).status,400);
-    assert.equal((await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:.18,z:7},jumping:false})).status,204);
+    assert.equal((await post(target.cookie,'/api/state',{id:target.id,position:{x:0,y:.18,z:77},jumping:false})).status,204);
     for(let id=33;id<=49;id++)assert.equal((await attack(id)).status,200);
     const death=await waitFor(()=>target.events.find(e=>e.type==='weapon-health'&&e.health===0));
     const corpse=await waitFor(()=>attacker.events.find(e=>e.type==='player-death'));

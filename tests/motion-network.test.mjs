@@ -17,7 +17,7 @@ test('server preserves capture cadence, swimming and profiles in small movement 
   await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));
   await copyFile(new URL('../city-layout.js',import.meta.url),join(fixture,'city-layout.js'));
   await copyFile(new URL('../world-systems.js',import.meta.url),join(fixture,'world-systems.js'));
-  for(const file of ['zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+for(const file of ['zombies-server.mjs','game-security.mjs','weapons.js','weapons-server.mjs','social-server.mjs','missions-server.mjs','police-server.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   const base=`http://127.0.0.1:${port}`,streams=[];
   let logs='';child.stderr.on('data',chunk=>logs+=chunk);
@@ -54,17 +54,18 @@ test('server preserves capture cadence, swimming and profiles in small movement 
     const snapshot=newcomer.hello.players.find(value=>value.id===id);
     assert.equal(snapshot.name,'MOVE TEST');assert.equal(snapshot.appearance.hairStyle,'braids');assert.equal(snapshot.position.x,origin.x+.25);
     // Reach the sea with ordinary bounded movement, not a test teleport or security bypass.
+    let shoreline=135;while(LowkeyWorld.groundHeight(shoreline,origin.z)!==null&&shoreline<LowkeyCityLayout.bounds.maxX)shoreline++;assert.ok(shoreline<LowkeyCityLayout.bounds.maxX);const seaX=shoreline+10,landX=shoreline-3;
     let x=origin.x+.25,sequence=3,sampledAt=1100;
-    while(x<145){
-      await delay(60);x=Math.min(145,x+.72);sampledAt+=60;
+    while(x<seaX){
+      await delay(60);x=Math.min(seaX,x+.72);sampledAt+=60;
       const ground=LowkeyWorld.groundHeight(x,origin.z),y=ground??LowkeyWorld.waterHeight(x,origin.z,Date.now())-1.27;
       assert.equal((await post(player.cookie,'/api/state',{id,sequence:sequence++,sampledAt,position:{x,y,z:origin.z},swimming:false,jumping:true})).status,204);
     }
     const swimming=await waitFor(()=>observer.events.filter(e=>e.type==='state'&&e.player.id===id).at(-1)?.player.swimming&&observer.events.filter(e=>e.type==='state'&&e.player.id===id).at(-1).player);
     assert.equal(swimming.jumping,false);assert.ok(swimming.position.y<-1,'buoyancy places feet below the water surface');
     assert.equal(player.events.filter(e=>e.type==='movement-correction').length,0,'legal swimming is accepted without snapping or kicking');
-    while(x>133){await delay(60);x=Math.max(133,x-.72);sampledAt+=60;const ground=LowkeyWorld.groundHeight(x,origin.z),y=ground??LowkeyWorld.waterHeight(x,origin.z,Date.now())-1.27;await post(player.cookie,'/api/state',{id,sequence:sequence++,sampledAt,position:{x,y,z:origin.z},swimming:true});}
-    await waitFor(()=>{const last=observer.events.filter(e=>e.type==='state'&&e.player.id===id).at(-1)?.player;return last&&last.position.x===133&&!last.swimming;});
+    while(x>landX){await delay(60);x=Math.max(landX,x-.72);sampledAt+=60;const ground=LowkeyWorld.groundHeight(x,origin.z),y=ground??LowkeyWorld.waterHeight(x,origin.z,Date.now())-1.27;await post(player.cookie,'/api/state',{id,sequence:sequence++,sampledAt,position:{x,y,z:origin.z},swimming:true});}
+    await waitFor(()=>{const last=observer.events.filter(e=>e.type==='state'&&e.player.id===id).at(-1)?.player;return last&&last.position.x===landX&&!last.swimming;});
   }finally{
     for(const stream of streams)stream.abort();const stopped=once(child,'exit');child.kill();await stopped;
     assert.equal(dirname(resolve(fixture)),resolve(tmpdir()));assert.ok(basename(fixture).startsWith('lowkey-motion-test-'));await rm(fixture,{recursive:true,force:true});

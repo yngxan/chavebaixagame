@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import '../weapons.js';
 
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 function functionSource(name){
@@ -15,7 +16,7 @@ function functionSource(name){
 test('each press sends a punch while earlier requests and swings are still pending',async()=>{
   const requests=[],resolvers=[];
   const context=vm.createContext({
-    performance:{now:()=>100},
+    performance:{now:()=>100},LowkeyWeapons,
     fetch:(_url,options)=>{requests.push(JSON.parse(options.body));return new Promise(resolve=>resolvers.push(resolve));},
   });
   vm.runInContext(`
@@ -24,6 +25,8 @@ test('each press sends a punch while earlier requests and swings are still pendi
     const glockEquipped=false,localHealth=100,avatar={rotation:{y:0}},arms=[],bodyGroup={};
     const yaw=.7,pitch=-.2,firstPerson=true,localEmoteDisplay=null,avatarSmokingProps={};
     const resetCombatPose=()=>{},updateSmokingProps=()=>{},showCombatBadge=()=>{},showToast=()=>{};
+    const coastController={rideSeats:new Map()},localHijackPending=false,localGhost=false,weaponWheel=null,gamePhone=null,gameMap={isOpen:()=>false},policeController={isJailed:()=>false},LowkeyCityLayout={inSafeZone:()=>false};
+    const selectedWeapon='punch',weaponSwitchPending=false,weaponSwitchUntil=0;
     ${functionSource('beginLocalCombat')}
     async ${functionSource('triggerCombat')}
     globalThis.pending=Array.from({length:8},()=>triggerCombat('attack'));

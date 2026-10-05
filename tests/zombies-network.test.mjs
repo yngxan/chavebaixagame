@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, copyFile, rm } from 'node:fs/promises';
+import { mkdtemp, copyFile, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -17,7 +17,9 @@ test('Zombies chat command starts shared rounds, disables friendly fire and sync
   await copyFile(new URL('../server.mjs',import.meta.url),join(fixture,'server.mjs'));
   await copyFile(new URL('../city-layout.js',import.meta.url),join(fixture,'city-layout.js'));
   await copyFile(new URL('../world-systems.js',import.meta.url),join(fixture,'world-systems.js'));
-  for(const file of ['zombies-server.mjs','game-security.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+for(const file of ['zombies-server.mjs','game-security.mjs','weapons.js','weapons-server.mjs','social-server.mjs','missions-server.mjs','police-server.mjs'])await copyFile(new URL('../'+file,import.meta.url),join(fixture,file));
+  // Combat remains forbidden inside the festival safe square, even in Zombies mode.
+  const source=await readFile(join(fixture,'server.mjs'),'utf8');await writeFile(join(fixture,'server.mjs'),source.replace('  const publicApiPaths',`  if(url.pathname==='/test-position'){const p=players.get(url.searchParams.get('id'));if(p)p.position={x:0,y:.18,z:75};return json(response,200,{});}\n  const publicApiPaths`));
   const child=spawn(process.execPath,[join(fixture,'server.mjs')],{env:{...process.env,PORT:String(port),DATABASE_URL:'',RENDER:'',CF_SFU_APP_ID:'',CF_SFU_APP_SECRET:''},stdio:['ignore','pipe','pipe']});
   const base=`http://127.0.0.1:${port}`,streams=[];
   async function waitFor(predicate){const deadline=Date.now()+4000;while(Date.now()<deadline){const result=predicate();if(result)return result;await delay(10);}throw new Error('Timed out waiting for combat event');}
@@ -33,8 +35,9 @@ test('Zombies chat command starts shared rounds, disables friendly fire and sync
       const hello=await waitFor(()=>events.find(event=>event.type==='hello'));return{cookie,id:hello.id,events};
     }
     const attacker=await player('attacker'),friend=await player('friend');
-    assert.equal((await post(attacker.cookie,'/api/state',{id:attacker.id,position:{x:0,y:.18,z:5}})).status,204);
-    assert.equal((await post(friend.cookie,'/api/state',{id:friend.id,position:{x:0,y:.18,z:7}})).status,204);
+    for(const p of [attacker,friend])await fetch(base+'/test-position?id='+p.id);
+    assert.equal((await post(attacker.cookie,'/api/state',{id:attacker.id,position:{x:0,y:.18,z:75}})).status,204);
+    assert.equal((await post(friend.cookie,'/api/state',{id:friend.id,position:{x:0,y:.18,z:77}})).status,204);
     assert.equal((await post(attacker.cookie,'/api/chat',{id:attacker.id,text:'/zombies'})).status,204);
     const state=await waitFor(()=>friend.events.find(e=>e.type==='zombies-state'&&e.state.active));
     assert.equal(state.state.round,1);assert.equal(state.state.total,10);
@@ -46,7 +49,7 @@ test('Zombies chat command starts shared rounds, disables friendly fire and sync
     const snapshot=await waitFor(()=>late.events.find(e=>e.type==='zombies-state'));
     assert.equal(snapshot.state.round,1);assert.ok(snapshot.zombies.some(z=>z.id===enemy.id),'late join receives existing enemies, not a restarted round');
     await delay(1750);
-    const motion=attacker.events.filter(e=>e.type==='zombies-motion').at(-1),origin={x:0,y:1.65,z:5};
+    const motion=attacker.events.filter(e=>e.type==='zombies-motion').at(-1),origin={x:0,y:1.65,z:75};
     const visible=motion.zombies.find(row=>{const spawned=attacker.events.find(e=>e.type==='zombie-spawn'&&e.zombie.id===row[0]);return spawned&&Date.now()>spawned.zombie.spawnAt+1600&&LowkeyWorld.shotBlock(origin,{x:row[1],y:row[2]+1.4,z:row[3]},LowkeyWorld.initialVehicles())===null;});
     assert.ok(visible,'at least one emerged enemy is visible from the player');
     assert.equal((await post(attacker.cookie,'/api/combat',{id:attacker.id,action:'glock',aiming:true,facing:0,pitch:0,launchOrigin:origin,aimPoint:{x:visible[1],y:visible[2]+1.4,z:visible[3]}})).status,204);

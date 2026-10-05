@@ -1,0 +1,36 @@
+/* Keep game controls and utility shortcuts in separate thumb-safe zones. */
+@media(max-width:760px),(pointer:coarse){
+ body .brand{top:max(8px,env(safe-area-inset-top));left:max(10px,env(safe-area-inset-left))}
+ body .hud-actions{top:max(8px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right))}
+ body .chat-launch{position:absolute;left:max(10px,env(safe-area-inset-left));top:calc(58px + env(safe-area-inset-top));width:44px;min-width:44px;height:44px;padding:0;display:grid;place-items:center}
+ body .chat-launch:after{display:none}
+ body .touch-emotes{left:calc(62px + env(safe-area-inset-left));top:calc(58px + env(safe-area-inset-top));width:44px;height:44px}
+ body .touch-camera{top:calc(58px + env(safe-area-inset-top));width:44px;height:44px}
+ body .talk-btn{top:calc(58px + env(safe-area-inset-top));min-height:44px}
+ body .lk-phone-toggle{top:calc(144px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));width:44px;height:44px}
+ body .lk-map-toggle{top:calc(144px + env(safe-area-inset-top));right:calc(62px + env(safe-area-inset-right));width:44px;height:44px}
+ body .mission-toggle{top:calc(144px + env(safe-area-inset-top));right:calc(114px + env(safe-area-inset-right));min-height:44px}
+ body .weapon-hud{bottom:calc(clamp(104px,30vw,132px) + 18px + env(safe-area-inset-bottom))}
+ body .mission-card{top:calc(196px + env(safe-area-inset-top));max-height:calc(100dvh - 330px);overflow:auto}
+ body .combat-button{min-width:44px;min-height:44px}
+ body.avatar-editing .touch-controls,body.avatar-editing .combat-bar,body.avatar-editing .weapon-hud,body.avatar-editing .emote-bar,body.avatar-editing .lk-phone-toggle,body.avatar-editing .lk-map-toggle,body.avatar-editing .mission-toggle,body.avatar-editing .mission-card,body.avatar-editing .vehicle-interact,body.avatar-editing .vehicle-speed,body.avatar-editing #safeZoneBadge,body.avatar-editing .crosshair{display:none!important}
+ body.phone-open .touch-controls,body.phone-open .combat-bar,body.map-open .touch-controls,body.map-open .combat-bar{visibility:hidden}
+ body.phone-open .mission-card,body.map-open .mission-card{display:none!important}
+}
+.mission-card{overflow:auto;max-height:calc(100dvh - 220px)}
+@media(orientation:portrait) and (max-height:650px){body .mission-card{top:196px;max-height:calc(100dvh - 365px);width:calc(100vw - 150px)}}
+@media(orientation:landscape) and (pointer:coarse){
+ body #safeZoneBadge{top:calc(110px + env(safe-area-inset-top));font-size:8px;padding:6px 9px}
+ body .lk-phone-toggle{top:calc(58px + env(safe-area-inset-top));right:calc(164px + env(safe-area-inset-right))}
+ body .lk-map-toggle{top:calc(58px + env(safe-area-inset-top));right:calc(216px + env(safe-area-inset-right))}
+ body .mission-toggle{top:calc(58px + env(safe-area-inset-top));right:calc(268px + env(safe-area-inset-right));min-width:80px}
+ body .talk-btn{max-width:100px}
+ body .weapon-hud{top:calc(110px + env(safe-area-inset-top));bottom:auto;max-width:124px;flex-wrap:wrap;white-space:normal}
+ body .weapon-hud .health{margin-left:0;padding-left:0;border:0;white-space:nowrap}
+ body .weapon-hud #ammoReadout{flex-basis:100%;order:3;font-size:8px}
+ body.mission-open #safeZoneBadge{display:none}
+ body .mission-card{top:calc(110px + env(safe-area-inset-top));left:140px;max-height:calc(100dvh - 122px)}
+ body .chat{top:calc(110px + env(safe-area-inset-top));max-height:calc(100dvh - 122px)}
+ body .combat-bar{grid-template-columns:44px 54px;grid-template-rows:44px 54px}
+ body .touch-jump{right:calc(132px + env(safe-area-inset-right))}
+}

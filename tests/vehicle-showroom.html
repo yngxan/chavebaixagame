@@ -1,0 +1,20 @@
+<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LowKey · prévia dos veículos</title>
+<style>body{margin:0;background:#dbe2df;color:#17291f;font:16px system-ui}canvas{display:block}header{position:absolute;top:24px;left:32px}h1{margin:0;font-size:26px}p{margin:8px 0;color:#4c6157}nav{position:absolute;bottom:24px;left:32px;display:flex;gap:8px}button{padding:12px 18px;background:#17291f;color:white;border:0;border-radius:12px;cursor:pointer}</style>
+<header><h1>LOWKEY · VEÍCULOS</h1><p>Carro compacto e moto de rua · modelos do jogo</p></header>
+<nav><button id="front">Frente</button><button id="side">Lateral</button><button id="back">Traseira</button><button id="door">Abrir porta</button></nav>
+<script src="/three.min.js"></script><script src="/city-layout.js"></script><script src="/world-systems.js"></script><script src="/motion-sync.js"></script><script src="/vehicles-client.js"></script>
+<script>
+const scene=new THREE.Scene();scene.background=new THREE.Color(0xdbe2df);
+const camera=new THREE.PerspectiveCamera(42,innerWidth/innerHeight,.1,60),renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputEncoding=THREE.sRGBEncoding;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xf3f8ff,0x879381,1.5));const sun=new THREE.DirectionalLight(0xffedd9,2.2);sun.position.set(-3,8,6);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-7;sun.shadow.camera.right=7;sun.shadow.camera.top=7;sun.shadow.camera.bottom=-7;sun.shadow.normalBias=.025;scene.add(sun);
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(100,100),new THREE.MeshStandardMaterial({color:0xc8d2c7,roughness:1}));floor.rotation.x=-Math.PI/2;floor.position.y=-.01;floor.receiveShadow=true;scene.add(floor);
+const geometry=new THREE.BoxGeometry(1,1,1),box=(parent,x,y,z,sx,sy,sz,material,opts={})=>{const mesh=new THREE.Mesh(geometry,material);mesh.position.set(x,y,z);mesh.scale.set(sx,sy,sz);mesh.castShadow=opts.cast!==false;mesh.receiveShadow=true;parent.add(mesh);return mesh;};
+const controller=LowkeyVehicles.create({THREE,scene,box,mats:{red:new THREE.MeshStandardMaterial({color:0xe84343})}});
+const car=controller.models.get('garage-car'),moto=controller.models.get('garage-moto');car.group.position.set(-1.65,0,0);car.group.rotation.set(0,-.35,0);moto.group.position.set(1.9,0,.2);moto.group.rotation.set(0,-.35,0);
+function view(x,y,z){camera.position.set(x,y,z);camera.lookAt(0,.68,0);}view(5,3.8,7.5);
+document.getElementById('front').onclick=()=>view(5,3.8,7.5);document.getElementById('side').onclick=()=>view(8,3.3,.1);document.getElementById('back').onclick=()=>view(-5,3.8,-7.5);
+document.getElementById('door').onclick=()=>{car.doorPivot.rotation.y=car.doorPivot.rotation.y?0:-1.05;};
+function draw(){requestAnimationFrame(draw);renderer.render(scene,camera);}draw();addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+</script></html>
