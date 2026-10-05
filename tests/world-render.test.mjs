@@ -7,6 +7,17 @@ const label={textContent:''},sandbox=vm.createContext({console:{warn(){},log(){}
 for(const file of ['three.min.js','city-layout.js','world-systems.js','motion-sync.js','environment.js','vehicles-client.js'])vm.runInContext(await readFile(new URL('../'+file,import.meta.url),'utf8'),sandbox);
 const THREE=sandbox.THREE;
 
+test('larger cars keep render size, seats and collision bounds in sync',()=>{
+  const scene=new THREE.Scene(),box=(parent,x,y,z,sx,sy,sz,mat)=>{const mesh=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),mat);mesh.position.set(x,y,z);parent.add(mesh);return mesh;},controller=sandbox.LowkeyVehicles.create({THREE,scene,box}),car=sandbox.LowkeyWorld.initialVehicles().find(v=>v.kind==='car');
+  controller.receive({vehicles:[car],serverTime:0},0,0);
+  const model=controller.models.get(car.id),scale=sandbox.LowkeyWorld.CAR_SCALE;
+  assert.equal(scale,1.3);assert.equal(model.group.scale.x,scale);
+  assert.ok(Math.abs(model.group.userData.wheelRadius-.345*scale)<1e-9);
+  assert.ok(Math.abs(sandbox.LowkeyWorld.driverPose(car).scale-.62*scale)<1e-9);
+  const bounds=sandbox.LowkeyWorld.vehicleObstacles({id:'other'},[car]).find(o=>o.vehicleId===car.id);
+  assert.equal(bounds.hx,.9*scale);assert.equal(bounds.hz,1.75*scale);
+});
+
 test('hijack opens the door, animates both characters into their final positions and resets on cancellation',()=>{
   const scene=new THREE.Scene(),material=new THREE.MeshStandardMaterial();
   const box=(parent,x,y,z,sx,sy,sz,mat)=>{const mesh=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),mat);mesh.position.set(x,y,z);parent.add(mesh);return mesh;};
@@ -89,5 +100,5 @@ test('unoccupied vehicles do not attach themselves to an unconnected avatar; rea
   const records=sandbox.LowkeyWorld.initialVehicles();records[0].driverId='driver';
   controller.receive({vehicles:records,serverTime:100},100,100);
   controller.update(1/60,100,100,'driver',{throttle:1,steer:0,brake:false},1);
-  const model=controller.active('driver');assert.ok(model);assert.equal(controller.driverPose(model).scale,.62);assert.ok(model.headlight.intensity>0);
+  const model=controller.active('driver');assert.ok(model);assert.equal(controller.driverPose(model).scale,.62*sandbox.LowkeyWorld.CAR_SCALE);assert.ok(model.headlight.intensity>0);
 });

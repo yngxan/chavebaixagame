@@ -842,6 +842,14 @@ const server = createServer(async (request, response) => {
       if(policeGame.isJailed(player))return json(response,409,{error:'Aguarde terminar o tempo na cela.'});
       if(client.deadUntil||player.ghost)return json(response,409,{error:'Espectadores não podem usar veículos.'});
       let action=data.action,boarding=null;
+      if(action==='customize'){
+        const vehicle=vehicles.get(String(data.vehicleId||'')),shop=LowkeyWorld.city.customs;
+        if(!vehicle||vehicle.kind!=='car'||vehicle.wrecked||vehicle.hijacking||vehicle.driverId!==player.id||player.vehicleId!==vehicle.id)return json(response,409,{error:'Entre no carro como motorista.'});
+        const dx=vehicle.x-shop.x,dz=vehicle.z-shop.z,c=Math.cos(shop.rotation),s=Math.sin(shop.rotation);
+        if(Math.abs(dx*c-dz*s)>4.1||Math.abs(dx*s+dz*c)>4.5||Math.abs(vehicle.y-.12)>1||Math.abs(vehicle.speed)>.3)return json(response,403,{error:'Estacione dentro da LOWKEY CUSTOMS.'});
+        if(!['body','wheels'].includes(data.target)||typeof data.color!=='string'||!/^#[0-9a-f]{6}$/i.test(data.color))return json(response,400,{error:'Escolha uma cor válida.'});
+        vehicle[data.target==='wheels'?'wheelColor':'color']=data.color.toLowerCase();broadcast({type:'world-state',...worldSnapshot()});response.writeHead(204);return response.end();
+      }
       if(action==='paint'){
         const vehicle=vehicles.get(String(data.vehicleId||''));
         if(!vehicle||!(vehicle.garageBay||vehicle.marinaBay)||vehicle.wrecked||vehicle.hijacking||vehicle.driverId&&vehicle.driverId!==player.id)return json(response,409,{error:'Escolha um veículo disponível na garagem ou marina.'});
@@ -1452,7 +1460,7 @@ setInterval(()=>{
     for(const target of players.values()){
       if(LowkeyCityLayout.inSafeZone(vehicle)||LowkeyCityLayout.inSafeZone(target.position)||target.vehicleId||target.health<=0||target.id===vehicle.driverId||Math.abs(target.position.y-vehicle.y)>1.25||now-(target.lastVehicleImpactAt||0)<1100)continue;
       const relative={x:target.position.x-vehicle.x,z:target.position.z-vehicle.z},c=Math.cos(vehicle.rotation),s=Math.sin(vehicle.rotation),localX=relative.x*c-relative.z*s,localZ=relative.x*s+relative.z*c;
-      const hit=vehicle.kind==='car'?Math.abs(localX)<1.12&&Math.abs(localZ)<1.86:Math.hypot(localX,localZ)<.60;
+      const hit=vehicle.kind==='car'?Math.abs(localX)<1.12*LowkeyWorld.CAR_SCALE&&Math.abs(localZ)<1.86*LowkeyWorld.CAR_SCALE:Math.hypot(localX,localZ)<.60;
       if(!hit||Math.abs(vehicle.speed)<4.5)continue;
       const direction=Math.sign(vehicle.speed)||1,damage=vehicle.kind==='car'?38:23,impulse={x:Math.sin(vehicle.rotation)*direction*Math.min(11,4.5+Math.abs(vehicle.speed)*.32),y:Math.min(10,5+Math.abs(vehicle.speed)*.20),z:Math.cos(vehicle.rotation)*direction*Math.min(11,4.5+Math.abs(vehicle.speed)*.32)};
       target.lastVehicleImpactAt=now;target.health=Math.max(0,target.health-damage);const targetClient=clients.get(target.id),died=target.health===0,ghostDeath=died&&zombiesGame.active,deadUntil=died&&!ghostDeath?now+10000:0;

@@ -1,6 +1,7 @@
 (() => {
   const SEGMENT_MS = 15 * 60 * 1000, TRANSITION_MS = 10000, HIJACK_MS=1800;
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  const CAR_SCALE=1.3;
   const city=LowkeyCityLayout,MAP_HALF_SIZE=city.MAP_HALF_SIZE;
   const groundSurfaces=[...city.surfaces,...city.expansionSurfaces,...city.bridgeSurfaces,...city.coast.surfaces,...city.entrances],groundCells=new Map(),GROUND_CELL=32;
   for(const p of groundSurfaces){const c=Math.abs(Math.cos(p.rot||0)),s=Math.abs(Math.sin(p.rot||0)),hx=p.hx*c+p.hz*s,hz=p.hz*c+p.hx*s;for(let x=Math.floor((p.x-hx)/GROUND_CELL);x<=Math.floor((p.x+hx)/GROUND_CELL);x++)for(let z=Math.floor((p.z-hz)/GROUND_CELL);z<=Math.floor((p.z+hz)/GROUND_CELL);z++){const key=`${x}:${z}`,cell=groundCells.get(key)||[];cell.push(p);groundCells.set(key,cell);}}
@@ -61,7 +62,7 @@
     for(let i=0;i<3;i++){const delta=b[i]-a[i];if(Math.abs(delta)<1e-9){if(a[i]<lo[i]||a[i]>hi[i])return null;continue;}const t1=(lo[i]-a[i])/delta,t2=(hi[i]-a[i])/delta;enter=Math.max(enter,Math.min(t1,t2));exit=Math.min(exit,Math.max(t1,t2));if(enter>exit)return null;}
     return enter<=1&&exit>=0?Math.max(0,enter):null;
   }
-  function shotBlock(from,to,vehicles=[]){let nearest=null;const obstacles=[...combatObstacles,...vehicles.map(v=>({x:v.x,z:v.z,rot:v.rotation,hx:v.kind==='boat'?1.4:v.kind==='jetski'?.45:v.kind==='car'?.86:.2,hz:v.kind==='boat'?3.25:v.kind==='jetski'?1.25:v.kind==='car'?1.7:.55,minY:v.y+(isWatercraft(v)?-.1:.35),maxY:v.y+(v.kind==='car'?1.65:v.kind==='boat'?1.4:.95)}))];for(const obstacle of obstacles){const t=boxHit(from,to,obstacle);if(t!==null&&(nearest===null||t<nearest))nearest=t;}return nearest;}
+  function shotBlock(from,to,vehicles=[]){let nearest=null;const obstacles=[...combatObstacles,...vehicles.map(v=>({x:v.x,z:v.z,rot:v.rotation,hx:v.kind==='boat'?1.4:v.kind==='jetski'?.45:v.kind==='car'?.86*CAR_SCALE:.2,hz:v.kind==='boat'?3.25:v.kind==='jetski'?1.25:v.kind==='car'?1.7*CAR_SCALE:.55,minY:v.y+(isWatercraft(v)?-.1:.35),maxY:v.y+(v.kind==='car'?1.65*CAR_SCALE:v.kind==='boat'?1.4:.95)}))];for(const obstacle of obstacles){const t=boxHit(from,to,obstacle);if(t!==null&&(nearest===null||t<nearest))nearest=t;}return nearest;}
   function crossesSolid(from,to){if(to.y<-.3)return false;for(const obstacle of combatObstacles){if(to.y>=obstacle.maxY-.12||from.y>=obstacle.maxY-.12)continue;const t=boxHit({...from,y:from.y+.75},{...to,y:to.y+.75},obstacle,.18);if(t!==null&&t>.01&&t<.99)return true;}return false;}
   function clearAt(x, z, radius, obstacles = drivingObstacles,probeHeight=null) {
     const bounds=city.bounds;
@@ -119,9 +120,9 @@
   }
   function vehicleClearAt(vehicle,x,z,rotation=vehicle.rotation,obstacles=drivingObstacles){
     if(isWatercraft(vehicle))return watercraftClearAt(vehicle,x,z,rotation,obstacles);
-    const moto=vehicle.kind==='moto',radius=moto?.29:.78;
+    const moto=vehicle.kind==='moto',radius=moto?.29:.78*CAR_SCALE;
     if(moto)return !motoContact(vehicle,x,z,rotation,obstacles);
-    return [-1,0,1].every(side=>clearAt(x+Math.sin(rotation)*side*1.18,z+Math.cos(rotation)*side*1.18,radius,obstacles,vehicle.y));
+    return [-1,0,1].every(side=>clearAt(x+Math.sin(rotation)*side*1.18*CAR_SCALE,z+Math.cos(rotation)*side*1.18*CAR_SCALE,radius,obstacles,vehicle.y));
   }
   function drivingFloor(x,z,y=0){return groundHeight(x,z,city.groundKind(x,z)==='bridge'?y+.4:Infinity);}
   function motoContact(vehicle,x,z,rotation,obstacles){
@@ -237,6 +238,7 @@
     return {x:vehicle.x+Math.sin(vehicle.rotation)*shift,y:vehicle.y+.36*(1-Math.cos(angle))+.85*Math.sin(angle),z:vehicle.z+Math.cos(vehicle.rotation)*shift,pitch:-angle};
   }
   function seatPose(vehicle,offset,scale) {
+    if(vehicle.kind==='car'){offset={x:offset.x*CAR_SCALE,y:offset.y*CAR_SCALE,z:offset.z*CAR_SCALE};scale*=CAR_SCALE;}
     const frame=vehicleFrame(vehicle),angle=-frame.pitch,c=Math.cos(vehicle.rotation),s=Math.sin(vehicle.rotation),z=offset.z*Math.cos(angle)-offset.y*Math.sin(angle);
     return {x:frame.x+offset.x*c+z*s,y:frame.y+offset.y*Math.cos(angle)+offset.z*Math.sin(angle),z:frame.z-offset.x*s+z*c,rotation:vehicle.rotation,pitch:frame.pitch,scale};
   }
@@ -256,14 +258,14 @@
       for(let i=0;i<16;i++){const angle=i*Math.PI/8,x=vehicle.x+Math.sin(angle)*reach,z=vehicle.z+Math.cos(angle)*reach,floor=groundHeight(x,z);if(floor!==null&&floor<=1.4&&clearAt(x,z,.34))return{x,y:floor,z};}
       for(let i=0;i<16;i++){const angle=i*Math.PI/8,x=vehicle.x+Math.sin(angle)*reach,z=vehicle.z+Math.cos(angle)*reach;if(watercraftPointClear(x,z,.34,drivingObstacles))return{x,y:waterHeight(x,z,Date.now())-1.27,z};}return null;
     }
-    const radius=vehicle.kind==='car'?1.05:.46;
+    const radius=vehicle.kind==='car'?1.05*CAR_SCALE:.46;
     for (const [side,forward] of [[1,0],[-1,0],[0,-1],[0,1]]) {
       const distance=radius+1.05,x=vehicle.x+Math.cos(vehicle.rotation)*side*distance+Math.sin(vehicle.rotation)*forward*distance,z=vehicle.z-Math.sin(vehicle.rotation)*side*distance+Math.cos(vehicle.rotation)*forward*distance;
       if (clearAt(x,z,.34,drivingObstacles,vehicle.y))return{x,y:drivingFloor(x,z,vehicle.y),z};
     }
     return null;
   }
-  function vehicleObstacles(vehicle,records){return [...drivingObstacles,...[...records].filter(other=>other.id!==vehicle.id).map(other=>({x:other.x,z:other.z,hx:other.kind==='boat'?1.5:other.kind==='car'?.9:other.kind==='jetski'?.5:.35,hz:other.kind==='boat'?3.25:other.kind==='car'?1.75:1.15,rot:other.rotation,minY:other.y,maxY:other.y+(other.kind==='car'?1.7:1.1),vehicleId:other.id}))];}
+  function vehicleObstacles(vehicle,records){return [...drivingObstacles,...[...records].filter(other=>other.id!==vehicle.id).map(other=>({x:other.x,z:other.z,hx:other.kind==='boat'?1.5:other.kind==='car'?.9*CAR_SCALE:other.kind==='jetski'?.5:.35,hz:other.kind==='boat'?3.25:other.kind==='car'?1.75*CAR_SCALE:1.15,rot:other.rotation,minY:other.y,maxY:other.y+(other.kind==='car'?1.7*CAR_SCALE:1.1),vehicleId:other.id}))];}
   function waterObstacleHit(x,z,radius,o){if((o.minY??-Infinity)>city.coast.waterY+2.2)return false;const dx=x-o.x,dz=z-o.z,reach=(o.r??o.hx+o.hz)+radius;if(Math.abs(dx)>reach||Math.abs(dz)>reach)return false;if(o.r!==undefined)return Math.hypot(dx,dz)<o.r+radius;const c=Math.cos(o.rot||0),s=Math.sin(o.rot||0),lx=dx*c-dz*s,lz=dx*s+dz*c;return Math.hypot(Math.max(0,Math.abs(lx)-o.hx),Math.max(0,Math.abs(lz)-o.hz))<radius;}
   function watercraftImpact(vehicle,x,z,rotation,obstacles){const boat=vehicle.kind==='boat',radius=boat?.73:.42,length=boat?2.5:.8,width=boat?.75:0,c=Math.cos(rotation),s=Math.sin(rotation);for(const o of obstacles)for(const side of [-1,0,1])for(const forward of [-1,0,1])if(waterObstacleHit(x+c*side*width+s*forward*length,z-s*side*width+c*forward*length,radius,o))return o;return null;}
   function watercraftPointClear(x,z,radius,obstacles,draft=.65){const b=city.bounds;if(x<b.minX+radius||x>b.maxX-radius||z<b.minZ+radius||z>b.maxZ-radius)return false;
@@ -297,7 +299,7 @@
     const face=Math.atan2(seat.x-approach.x,seat.z-approach.z),turn=Math.atan2(Math.sin(vehicle.rotation-face),Math.cos(vehicle.rotation-face));
     return {...position,rotation:face+turn*enter,scale:1+(seat.scale-1)*enter,progress,pull:smooth((progress-.32)/.38),enter};
   }
-  globalThis.LowkeyWorld={MAP_HALF_SIZE,city,SEGMENT_MS,HIJACK_MS,daylight,groundHeight,drivingFloor,supportHeight,waterHeight,waterAt,isSwimming,advanceSwimmer,keepCameraAboveGround,constrainCamera,shotBlock,crossesSolid,initialVehicles,garageVehicle,replenishGarage,expireUnoccupiedVehicles,vehicleClearAt,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose,isWatercraft,passengerCapacity,marinaVehicle,replenishMarina};
+  globalThis.LowkeyWorld={CAR_SCALE,MAP_HALF_SIZE,city,SEGMENT_MS,HIJACK_MS,daylight,groundHeight,drivingFloor,supportHeight,waterHeight,waterAt,isSwimming,advanceSwimmer,keepCameraAboveGround,constrainCamera,shotBlock,crossesSolid,initialVehicles,garageVehicle,replenishGarage,expireUnoccupiedVehicles,vehicleClearAt,advanceVehicle,vehicleInteraction,vehicleFrame,driverPose,passengerPose,exitPosition,clearAt,drivingObstacles,vehicleObstacles,hijackPose,isWatercraft,passengerCapacity,marinaVehicle,replenishMarina};
   // One deterministic timeline and arc-length table for server, seats and scenery.
   const wrap=n=>((n%1)+1)%1,curve=city.coast.trackPoint,arc=[0];let previous=curve(0);
   for(let i=1;i<=200;i++){const p=curve(i/200);arc.push(arc[i-1]+Math.hypot(...p.map((v,a)=>v-previous[a])));previous=p;}

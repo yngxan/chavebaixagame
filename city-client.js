@@ -7,6 +7,7 @@
     function material(color){if(!materials.has(color))materials.set(color,new THREE.MeshStandardMaterial({color,roughness:.84,flatShading:true}));return materials.get(color);}
     const white=material(0xf3eee1),asphalt=material(0x424d54),pavement=material(0xbfc8c4),trim=material(0xfaf9ec),dark=material(0x304454),wood=material(0x795641),glass=material(0x63c8db),roofFlat=material(0x879687),leaf=material(0x6cbb36),leafLight=material(0x99ce48),bark=material(0x866145),lamp=material(0xffe3a2);
     glass.emissive.set(0x9fc8df);lamp.emissive.set(0xffc775);
+    const showroomGlass=new THREE.MeshStandardMaterial({color:0x92b7c6,roughness:.14,metalness:.25,transparent:true,opacity:.16,depthWrite:false});
     function part(mat,x,y,z,sx,sy,sz,rotation=0,geo=boxGeo,cast=true){
       const key=`${mat.uuid}:${geo.uuid}:${cast}`,batch=batches.get(key)||{mat,geo,cast,items:[]};
       batch.items.push({x,y,z,sx,sy,sz,rotation});batches.set(key,batch);
@@ -133,7 +134,24 @@
         for(const x of [-2,2]){const p=layout.storePoint(b,x,-2),light=new THREE.PointLight(x<0?0xce43ff:0xff407d,0,13,2);light.position.set(p.x,3.5,p.z);group.add(light);clubLights.push(light);}
         continue;
       }
+      if(b.kind==='customs'){
+        const brick=material(0x85504e),concrete=material(0x777872),steel=material(0x36424a),yellow=material(0xe2bf70),red=material(0xaa343b),light=material(0xe8f8f3);light.emissive.set(0xa6bfb4);
+        local(concrete,0,.01,0,15,.12,13);local(brick,-7.35,3.25,0,.3,6.5,13);local(brick,7.35,3.25,0,.3,6.5,13);local(brick,0,3.25,-6.35,15,6.5,.3);
+        for(const x of [-5.7,5.7])local(brick,x,3.25,6.35,3.6,6.5,.3);local(brick,0,5.65,6.35,7.8,1.7,.3);local(steel,0,6.6,0,15.4,.2,13.4);
+        for(let y=.45;y<6.5;y+=.45)for(const x of [-5.7,5.7])local(concrete,x,y,6.515,3.6,.018,.015);
+        for(const x of [-5.9,5.9]){local(yellow,x,4.2,6.52,1.0,1.35,.035);for(const dx of [-.32,0,.32])local(steel,x+dx,4.2,6.56,.05,1.4,.04);}
+        for(const x of [-4,4])local(yellow,x,2.4,6.55,.14,4.8,.18);
+        for(let z=-4.5;z<6;z+=3){local(steel,0,6.22,z,14,.16,.18);for(const x of [-3.7,3.7])local(light,x,6.1,z,3.2,.055,.16);}
+        local(steel,0,.10,0,6.3,.06,8.5);for(const x of [-3,3]){local(yellow,x,.14,0,.08,.02,8.5);local(red,x,1.55,-1,.24,3.1,.25);local(steel,x*.65,.25,-1,2,.15,.3);}
+        for(const z of [-3,0,3]){local(red,-6,.55,z,1.5,1.1,2.3);local(steel,-6,1.15,z,1.8,.12,2.5);for(const y of [.35,.65,.95])local(trim,-5.22,y,z,.03,.035,1.7);}
+        for(const x of [4.8,5.8,6.8]){local(steel,x,.55,-4,.8,1.1,.8);local(yellow,x,1.12,-4,.85,.06,.85);}
+        local(steel,5.4,7.3,-3.5,2.7,1.4,2.6);local(concrete,5.4,6.7,-3.5,3.1,.15,3);
+        for(const [label,x,y,z,w,h]of [['LOWKEY CUSTOMS',0,5.8,6.55,7.1,.85],['PINTURA · RODAS',0,4.95,6.57,5.6,.38],['LOWKEY CUSTOMS',0,3.9,-6.15,7,1],['ESTACIONE PARA PERSONALIZAR',0,.19,3.8,4.4,.35]]){const p=layout.storePoint(b,x,z);districtSign(label,p.x,y+.12,p.z,w,h,b.rotation);}
+        continue;
+      }
       if(b.kind==='police'){
+        // Limestone joints, recessed window frames and horizontal blue reveals.
+        for(const side of [-1,1])for(const y of [.65,1.25,1.85,2.45,3.05])local(trim,side*4.5,y,6.515,5.7,.022,.018);
         local(wall,-7.35,h/2,0,.3,h,d);local(wall,7.35,h/2,0,.3,h,d);local(wall,0,h/2,-6.35,w,h,.3);local(roofFlat,0,h+.1,0,w+.4,.2,d+.4);local(pavement,0,-.04,0,w,.08,d);
         for(const x of [-4.5,4.5]){local(wall,x,1.7,6.35,6,3.4,.3);local(glass,x,1.8,6.53,4.5,1.65,.04);}
         local(accent,0,3.86,6.35,w,1.1,.3);for(const x of [-1.5,1.5])local(trim,x,1.6,6.35,.1,3.2,.2);
@@ -142,29 +160,83 @@
         for(const y of [.45,2.9]){local(dark,1.9,y,-3.8,.07,.07,5);local(dark,4.6,y,-1.3,5.3,.07,.07);}
         local(dark,5,.4,-5.2,2.7,.55,1.3);local(white,5,.73,-5.2,2.6,.12,1.2);local(wood,-3,.51,-1.5,2.8,1.02,1.3);local(dark,-3,1.2,-1.5,.7,.35,.3);
         for(const x of [-4,0,4])local(lamp,x,4.1,0,1.8,.07,.5);
-        if(signMaterial){for(const [text,x,y,z,width,height] of [['DELEGACIA',0,4,6.55,7,.7],['CELA',4.6,3.45,-1.18,1.6,.38],['POLÍCIA LOWKEY',-3,2.9,-6.13,3.6,.6]]){const p=layout.storePoint(b,x,z),sign=new THREE.Mesh(new THREE.PlaneGeometry(width,height),signMaterial([text],'#1b2b43','#f4f6da'));sign.position.set(p.x,y,p.z);sign.rotation.y=b.rotation;group.add(sign);}}
+        // Two-storey civic silhouette, kept above the existing AI/entry floor.
+        local(white,0,6.54,0,w,3.64,d);local(accent,0,4.95,6.53,w,.17,.12);
+        for(const side of [-1,1]){local(white,side*6.8,4.35,5.9,1.15,8.5,1.2);local(accent,side*6.8,3.15,6.55,1.2,.22,.08);}
+        for(const x of [-4.5,0,4.5]){local(glass,x,6.6,6.54,3.85,2.8,.08);local(accent,x,4.98,6.9,4.1,.12,1.1);for(const dx of [-1.9,0,1.9])local(trim,x+dx,6.6,6.60,.08,2.8,.08);}
+        for(const side of [-1,1]){local(accent,side*7.54,6.8,0,.08,.25,d);for(const z of [-3,1,4])local(glass,side*7.58,6.5,z,.08,2.3,2.5);}
+        local(white,0,8.48,0,w+.2,.24,d+.2);local(dark,0,8.63,0,w+.4,.06,d+.4);
+        const towerX=-5.3,towerZ=-4.2;
+        local(white,towerX,10.9,towerZ,4.2,4.56,4.2);local(accent,towerX,11.85,towerZ,4.3,.65,4.3);
+        local(trim,towerX,12.35,towerZ,4.5,.22,4.5);local(glass,towerX,13.25,towerZ,4.1,1.6,4.1);
+        for(const side of [-1,1])for(const dz of [-1.98,1.98])local(trim,towerX+side*1.98,13.25,towerZ+dz,.12,1.6,.12);
+        local(accent,towerX,14.15,towerZ,4.5,.22,4.5);local(roofFlat,towerX,14.28,towerZ,4.2,.04,4.2);
+        // Rooftop pad matches a shared physical support surface.
+        local(dark,1.65,8.66,.65,6.5,.06,6.5);
+        for(const x of [.45,2.85])local(white,x,8.70,.65,.16,.018,3.2);local(white,1.65,8.70,.65,2.55,.018,.16);
+        for(const x of [-6,6])for(const z of [-5.2,5.2])local(neonBlue,x,8.7,z,.24,.08,.24);
+        for(const x of [4.8,6.1]){local(pavement,x,8.84,-4.8,1,.4,1);local(dark,x,9.07,-4.8,.75,.06,.75);}
+        const towerSignPoint=layout.policePoint(towerX,towerZ+2.18);districtSign('POLÍCIA',towerSignPoint.x,11.96,towerSignPoint.z,3.8,.48,b.rotation);
+        for(const [text,x,y,z,width,height] of [['POLÍCIA · LOWKEY',0,4,6.62,9,.65],['CELA',4.6,3.45,-1.18,1.6,.38],['POLÍCIA LOWKEY',-3,2.9,-6.13,3.6,.6]]){const p=layout.storePoint(b,x,z);districtSign(text,p.x,y,p.z,width,height,b.rotation);}
         const lightPoint=layout.storePoint(b,0,-1),interiorLight=new THREE.PointLight(0xffe4b0,12,15,2);interiorLight.position.set(lightPoint.x,3.9,lightPoint.z);interiorLight.castShadow=false;group.add(interiorLight);
         continue;
       }
       if(b.kind==='boutique'){
+        for(const side of [-1,1]){local(trim,side*7.28,2,6.55,.22,4,.16);local(wood,side*6.7,.12,5,1.25,.16,2.2);}local(lamp,0,3.48,6.4,14.4,.045,.08);
         local(wall,-7.35,h/2,0,.3,h,d);local(wall,7.35,h/2,0,.3,h,d);local(wood,0,h/2,-6.35,w,h,.3);local(roofFlat,0,h+.1,0,w+.4,.2,d+.4);
         local(wood,0,-.04,0,w,.08,d);
-        for(const x of [-4.4,4.4]){local(glass,x,1.7,6.35,6.2,3.2,.10);local(trim,x,.22,6.35,6.2,.44,.3);}
-        local(accent,0,3.84,6.35,w,1.1,.3);for(const x of [-1.3,1.3])local(trim,x,1.6,6.35,.10,3.2,.20);
+        for(const x of [-4.4,4.4]){local(showroomGlass,x,1.7,6.35,6.2,3.2,.10);local(trim,x,.14,6.35,6.2,.28,.3);for(const dx of [-2,0,2])local(dark,x+dx,1.7,6.42,.045,3.2,.045);}
+        local(white,0,3.84,6.35,w,1.1,.3);local(glass,0,4.06,6.53,w-1,.28,.04);for(const x of [-1.3,1.3]){local(trim,x,1.6,6.35,.22,3.2,.20);local(trim,x,2.4,6.5,.45,.8,.20);}
+        // Oversized rooftop tee and architectural fins, as in the reference.
+        for(const x of [-5.7,-4.7,-3.7,-2.7])local(trim,x,5.05,-1,.18,1.05,5.7);
+        for(const x of [3.2,4.2])local(dark,x,4.9,1,.08,.9,.08);
+        local(dark,3.7,6.5,1,2,2.8,.28);local(dark,3.7,7.25,1,3.4,.85,.28);local(trim,3.7,7.6,1.16,.58,.2,.035);
+        // Static stylized mannequins: no avatar animation or multiplayer traffic.
+        for(const x of [-4.6,4.6]){local(trim,x,.04,4.9,1.2,.08,1);local(accent,x,1.25,4.9,.65,.85,.35);local(trim,x,1.95,4.9,.45,.5,.42,leafGeo);for(const side of [-1,1]){local(dark,x+side*.19,.53,4.9,.16,1,.18);local(trim,x+side*.47,1.23,4.9,.17,.8,.18);}local(dark,x,1.75,4.9,.13,.15,.16);}
         for(const x of [-5.9,5.9]){local(dark,x,1.8,0,.08,.08,6);for(const z of [-2.7,2.7])local(dark,x,.9,z,.08,1.8,.08);for(let i=0;i<10;i++){const z=-2.4+i*.53,tint=i%3===0?accent:i%3===1?white:dark;local(tint,x,1.28,z,.48,.68,.13);local(tint,x,1.53,z,.74,.18,.13);}}
         for(const x of [-2.7,2.7]){local(wood,x,.45,-.7,2.2,.9,2.6);local(trim,x,.92,-.7,2.3,.08,2.7);for(let i=0;i<3;i++)for(let k=0;k<3;k++)local(i%2?accent:white,x+(i-1)*.66,1.02+k*.065,-.7,.50,.055,.65);}
         local(wood,4.6,.54,-4.7,3.2,1.08,1.3);local(dark,4.6,1.2,-4.7,.6,.35,.4);local(trim,-4,1.35,-6.13,2.3,2.4,.06);local(glass,-4,1.35,-6.08,2,2.1,.04);
         for(const x of [-4,0,4])local(lamp,x,4.1,0,1.8,.07,.5);
-        if(signMaterial){for(const [text,x,y,z,width,height] of [['BOUTIQUE',0,3.97,6.53,6.8,.7],['PROVADOR',-4,2.9,-6.02,2,.35]]){const p=layout.storePoint(b,x,z);const sign=new THREE.Mesh(new THREE.PlaneGeometry(width,height),signMaterial([text],'#24383b','#f4f6da'));sign.position.set(p.x,y,p.z);sign.rotation.y=b.rotation;group.add(sign);}}
+        for(const [text,x,y,z,width,height] of [['LOWKEY · BOUTIQUE',0,3.79,6.62,6.8,.44],['PROVADOR',-4,2.9,-6.02,2,.35]]){const p=layout.storePoint(b,x,z);districtSign(text,p.x,y,p.z,width,height,b.rotation);}
         continue;
       }
       if(b.kind==='garage'){
-        local(wall,-w/2+.15,h/2,0,.30,h,d);local(wall,w/2-.15,h/2,0,.30,h,d);local(wall,0,h/2,-d/2+.15,w,h,.30);
-        local(wall,0,4.08,d/2-.15,w,.74,.30);local(roofFlat,0,h+.1,0,w+.4,.2,d+.4);
-        local(material(0x879da2),0,-.04,0,w,.08,d);local(trim,0,-.05,8,12.8,.1,3);
-        for(const x of [-3,3]){for(const side of [-1,1])local(white,x+side*1.3,.005,0,.07,.008,5);local(white,x,.005,-2.5,2.65,.008,.07);local(lamp,x,3.95,0,2,.07,.45);}
-        for(let i=0;i<14;i++){const x=-w/2+(i+.5)*w/14;local(i%2?white:accent,x,3.68,d/2+.8,w/14,.16,1.8);}
-        if(signMaterial){const sign=new THREE.Mesh(new THREE.PlaneGeometry(6.8,.55),signMaterial(['GARAGEM','CARRO E MOTO · GRÁTIS'],'#24383b','#f4f6da'));sign.position.set(b.x+(d/2+.18)*s,4.30,b.z+(d/2+.18)*c);sign.rotation.y=b.rotation;group.add(sign);}
+        // Dealership keeps the original two driveable bays and a wide, open entrance.
+        const glazing=showroomGlass,red=material(0xc64a39);
+        local(dark,0,h/2,-d/2+.15,w,h,.30);
+        for(let x=-7;x<7;x+=1.4)local(trim,x,.012,0,.018,.012,12.5);
+        for(let z=-6;z<6;z+=1.4)local(trim,0,.013,z,14.6,.012,.018);
+        for(const x of [-5,0,5]){local(dark,x,4.13,0,.12,.08,10);for(const z of [-4,0,4])local(lamp,x,4.07,z,1.5,.045,.24);}
+        local(white,0,-.04,0,w,.08,d);local(asphalt,0,-.05,8,12.8,.1,3);
+        for(const side of [-1,1]){
+          local(dark,side*(w/2-.15),.35,0,.30,.7,d);
+          for(const z of [-4.3,0,4.3]){local(glazing,side*(w/2-.15),2.1,z,.12,2.8,4.1);local(trim,side*(w/2-.1),2.1,z-2.1,.20,2.8,.12);}
+          // Narrow end vitrines never cut across the car/motorcycle exit paths.
+          local(glazing,side*6.1,2.1,6.35,2.5,2.8,.12);
+          local(dark,side*6.1,.35,6.35,2.5,.7,.3);
+          local(trim,side*4.8,1.9,6.35,.12,3.6,.2);
+          local(dark,side*(w/2-.15),4.08,0,.3,.74,d);
+          local(neonBlue,side*(w/2+.03),4.35,0,.08,.075,d);
+          local(red,side*(w/2+.03),3.71,0,.08,.075,d);
+        }
+        local(dark,0,4.08,6.35,w,.74,.30);local(roofFlat,0,h+.1,0,w+.4,.2,d+.4);
+        // Stepped L-shaped parapet, metal ribs and red/blue luminous fascia.
+        local(dark,-2,4.93,5.5,w-4,1.05,1.8);local(dark,6,4.93,1.6,3,1.05,9.6);
+        local(trim,-2,5.5,5.5,w-3.8,.12,2);local(trim,6,5.5,1.6,3.2,.12,9.8);
+        for(let x=-7.2;x<=3.3;x+=.32)local(trim,x,4.98,6.42,.035,.88,.055);
+        local(neonBlue,0,4.42,6.55,w+.2,.07,.09);local(red,0,3.71,6.55,w+.2,.09,.09);
+        local(trim,0,3.62,6.7,w+.4,.12,.8);
+        for(const x of [-3,3]){for(const side of [-1,1])local(dark,x+side*1.3,.005,0,.07,.008,5);local(dark,x,.005,-2.5,2.65,.008,.07);local(lamp,x,4.12,0,2,.07,.45);}
+        // Original low-poly sports silhouettes on display: no network entities or AI.
+        for(const display of layout.dealershipDisplays){const x=display.localX,z=display.localZ,paint=material(display.color);
+          local(dark,x,.06,z,4.1,.12,2.05);local(paint,x,.55,z,3.45,.4,1.6);
+          local(dark,x-.15,.91,z,1.65,.38,1.35);local(paint,x-.2,1.14,z,1.35,.08,1.36);
+          local(paint,x-1.45,.92,z, .12,.1,1.9);for(const dz of [-.65,.65])local(trim,x+1.73,.6,z+dz,.04,.12,.32);
+          for(const dx of [-1.05,1.05])for(const dz of [-.82,.82]){local(dark,x+dx,.35,z+dz,.65,.65,.2);local(trim,x+dx,.35,z+dz*1.04,.32,.32,.08,leafGeo);}
+        }
+        local(wood,0,.6,-5.6,2.2,1.2,.7);local(dark,0,1.24,-5.6,2.3,.08,.8);local(dark,.5,1.46,-5.6,.5,.35,.08);
+        for(const side of [-1,1]){local(wood,side*6.2,.2,7.8,1.1,.4,1);local(leaf,side*6.2,.65,7.8,.9,.65,.9,leafGeo);}
+        for(const [text,x,y,z,width,height] of [['LOWKEY MOTORS',-1.5,4.94,6.72,9.7,.7],['SPORT · SHOWROOM',0,4.04,6.56,8.7,.4],['EXPOSIÇÃO',0,2.8,-6.17,3.4,.45]]){const p=layout.garagePoint(x,z);districtSign(text,p.x,y+.12,p.z,width,height,b.rotation);}
         continue;
       }
       if(b.kind==='airport-tower'){
@@ -206,6 +278,21 @@
         local(wood,0,1.25,d/2+.1,1.6,2.5,.12);local(wood,0,-.08,d/2+1,w*.8,.16,2.2);local(roofFlat,0,2.89,d/2+1,w*.84,.18,2.4);
         for(const x of [-w*.35,w*.35])local(wood,x,1.4,d/2+1.8,.18,2.8,.18);local(wood,-w*.24,.35,d/2+1,w*.23,.7,.6);local(dark,-w*.24,.73,d/2+1,w*.23,.06,.6);
         for(const side of [-1,1])local(glass,side*(w/2+.04),1.8,-1,.08,1.2,2);continue;
+      }
+      if(b.kind==='shop'&&b.shopName==='CAFÉ LOWKEY'){
+        const red=material(0xc64a39);local(white,0,h/2,0,w,h,d);local(white,0,h+.08,0,w+.4,.16,d+.4);
+        for(const side of [-1,1]){local(red,0,h+.28,side*(d/2+.13),w+.6,.45,.3);local(red,side*(w/2+.13),h+.28,0,.3,.45,d+.6);}
+        local(dark,0,1.45,d/2+.08,2,2.9,.12);local(glass,0,1.5,d/2+.16,1.6,2.6,.05);local(trim,.65,1.35,d/2+.21,.07,.5,.06);
+        for(const x of [-4.6,4.6]){local(dark,x,1.9,d/2+.07,4.1,2.5,.1);local(glass,x,1.9,d/2+.14,3.85,2.3,.06);for(let i=0;i<12;i++){local(i%2?white:red,x-2.1+(i+.5)*4.2/12,3.32,d/2+.72,4.2/12,.12,1.4);local(i%2?white:red,x-2.1+(i+.5)*4.2/12,3.16,d/2+1.37,4.2/12,.32,.06);}}
+        for(const side of [-1,1])for(const z of [-3,1.3]){local(dark,side*(w/2+.06),1.9,z,.08,2.4,3);local(glass,side*(w/2+.12),1.9,z,.05,2.15,2.75);}
+        for(const x of [-5.9,5.9]){local(wood,x,.22,d/2+.6,.7,.44,.7);local(leafLight,x,.65,d/2+.6,.7,.75,.7,leafGeo);}
+        local(pavement,-2,h+.4,-2,2.1,.6,1.7);local(dark,-2,h+.73,-2,1.7,.06,1.3);
+        // Giant burger icon made from cheap shared primitives.
+        local(wood,0,h+1.25,1,2.3,.28,.8,leafGeo);local(leaf,0,h+.97,1,2.4,.14,.84);local(red,0,h+.87,1,2.2,.12,.84);local(dark,0,h+.70,1,2.25,.22,.8);local(wood,0,h+.48,1,2.3,.17,.8,leafGeo);
+        for(const side of [-1,1]){for(let y=.4;y<2.9;y+=.22)local(wood,side*(w/2+.17),y,-3,.025,.07,2.8);local(trim,side*4.6,.65,d/2+.21,4.1,.045,.08);local(trim,side*4.6,1.88,d/2+.21,.06,2.35,.08);}
+        const p=layout.storePoint(b,0,d/2+.32);districtSign('LOWKEY · COFFEE & BURGERS',p.x,3.98,p.z,w-1,.58,b.rotation);
+        const menu=layout.storePoint(b,2,d/2+.42);districtSign('CAFÉ · LANCHES',menu.x,1.7,menu.z,1.25,.9,b.rotation);
+        continue;
       }
       local(wall,0,h/2,0,w,h,d);local(trim,0,.16,0,w+.18,.32,d+.18);
       if(b.kind==='tower'){
